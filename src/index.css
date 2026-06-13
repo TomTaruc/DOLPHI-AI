@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..900&family=IBM+Plex+Mono&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fraunces", serif;
+  --font-sans: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --ink:        #0D0F0E;
+  --graphite:   #1A1D1B;
+  --slate:      #252826;
+  --mist:       #3A3D3B;
+  --ash:        #6B6F6D;
+  --bone:       #E8E5DE;
+  --fog:        #B0ADA6;
+  --green:      #3DD68C;
+  --green-dim:  #1A6640;
+  --danger:     #E05252;
+  --warning:    #E0A020;
+  --info:       #4A90D9;
+}
+
+body {
+  background-color: var(--ink);
+  color: var(--bone);
+  font-family: "Be Vietnam Pro", sans-serif;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--mist);
+  border-radius: 3px;
+}
+
+.markdown-body {
+  font-family: inherit;
+  color: var(--bone);
+}
+.markdown-body p {
+  margin-bottom: 1em;
+}
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  color: var(--bone);
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.3em; }
+.markdown-body ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-bottom: 1em;
+}
+.markdown-body ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-bottom: 1em;
+}
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--mist);
+  padding: 8px;
+}
