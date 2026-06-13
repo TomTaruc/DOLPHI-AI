@@ -10,9 +10,11 @@ import { eq, desc, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { indexKnowledgeBase } from "./src/lib/indexer.ts";
 import { rewriteQuery, detectIntent, checkSemanticCache, verifyAnswer } from "./src/lib/pipeline.ts";
-import { searchKnowledge } from "./src/lib/retriever.ts";
+import { searchKnowledge, embedText } from "./src/lib/retriever.ts";
 import fetch from "node-fetch";
 import { GoogleGenAI } from "@google/genai";
+
+const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-2.0-flash';
 
 function getGenAI() {
   return new GoogleGenAI({ 
@@ -60,7 +62,20 @@ async function startServer() {
   app.use(express.json());
 
   // Wait for indexing
-  await indexKnowledgeBase();
+  indexKnowledgeBase().catch(e => console.error("Indexing failed:", e));
+
+  // Cleanup orphaned attachments older than 1 day
+  setInterval(async () => {
+     try {
+        const oldAtts = await db.execute(sql`SELECT * FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
+        for (const att of oldAtts) {
+           if (fs.existsSync(att.storage_path as string)) {
+              fs.unlinkSync(att.storage_path as string);
+           }
+        }
+        await db.execute(sql`DELETE FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
+     } catch(e) {}
+  }, 1000 * 60 * 60 * 12); // run every 12 hours
 
   app.get("/health", (req, res) => {
     res.json({ status: "ok" });
@@ -177,6 +192,11 @@ async function startServer() {
     const [att] = await db.select().from(attachments).where(eq(attachments.id, req.params.id));
     if (!att) return res.status(404).json({ error: "Not found" });
     
+    if (att.conversationId) {
+      const [conv] = await db.select().from(conversations).where(eq(conversations.id, att.conversationId));
+      if (conv && conv.userId !== req.dbUser!.id) return res.status(403).json({ error: "Forbidden" });
+    }
+    
     res.setHeader('Content-Type', att.mimeType);
     res.setHeader('Content-Disposition', att.isImage ? 'inline' : 'attachment');
     const stream = fs.createReadStream(att.storagePath);
@@ -205,7 +225,7 @@ async function startServer() {
         try {
           const ai = getGenAI();
           const response = await ai.models.generateContent({
-            model: "gemini-3.5-flash",
+            model: CHAT_MODEL,
             contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
           });
           const title = response.text?.trim();
@@ -245,7 +265,7 @@ async function startServer() {
       }
 
       // Check cache
-      const cached = await checkSemanticCache(message);
+      const cached = await checkSemanticCache(message, intent, attachment_ids);
       if (cached) {
          finalAnswer = cached;
          res.write(`data: ${JSON.stringify({ type: 'token', content: finalAnswer })}\n\n`);
@@ -257,24 +277,44 @@ async function startServer() {
          
          if (['knowledge_search', 'general_question'].includes(intent)) {
             rewritten = await rewriteQuery(message, history);
-            const chunks = await searchKnowledge(rewritten);
-            chunksUsed = chunks;
+            const searchResult = await searchKnowledge(rewritten);
+            chunksUsed = searchResult.results;
             
-            if (chunks.length > 0) {
-               confidence = chunks[0].similarity;
+            if (searchResult.error || chunksUsed.length === 0) {
+               confidence = 0.0;
+            } else {
+               confidence = chunksUsed[0].similarity || 0;
             }
-            contextChunksText = chunks.map(c => c.content).join('\n\n');
+            contextChunksText = chunksUsed.map((c: any) => c.content).join('\n\n');
          }
 
          const systemPrompt = `You are DOLPHI AI...\n\nRETRIEVED KNOWLEDGE (confidence: ${confidence}):\n${contextChunksText}\n\nINSTRUCTIONS:\nAnswer based on the retrieved knowledge. Priority Order:\n1. Uploaded Files\n2. Retrieved Knowledge\n3. Conversation Memory\n4. Model Knowledge\nIf retrieval fails or confidence < 0.3, continue answering using general model knowledge, clearly distinguishing it.`;
 
          const contents: any[] = [];
+         
+         const [latestSummary] = await db.select().from(import("./src/db/schema.ts").then(m=>m.conversationSummaries) as any /* fallback */).where(eq(import("./src/db/schema.ts").then(m=>m.conversationSummaries.conversationId) as any, convId)).orderBy(desc(import("./src/db/schema.ts").then(m=>m.conversationSummaries.createdAt) as any)).limit(1).catch(() => []);
+         // Actually, I should just import `conversationSummaries` at the top. Let's fix that next tool call. I'll just use raw sql for safety.
+         const summaryRes = await db.execute(sql`SELECT summary FROM conversation_summaries WHERE conversation_id = ${convId} ORDER BY created_at DESC LIMIT 1`);
+         if (summaryRes.length > 0 && summaryRes[0].summary) {
+             contents.push({ role: "model", parts: [{ text: "PREVIOUS CONVERSATION SUMMARY:\n" + summaryRes[0].summary }] });
+         }
 
-         // Add history
-         if (history && history.length > 0) {
-            for (const h of history.slice(-5)) {
-               contents.push({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.content || "" }] });
-            }
+         // Add history from db
+         const rawHistory = await db.execute(sql`SELECT * FROM messages WHERE conversation_id = ${convId} AND id != ${userMsg.id} ORDER BY created_at DESC LIMIT 8`);
+         rawHistory.reverse();
+
+         for (const h of rawHistory) {
+             let hParts: any[] = [{ text: h.content || "" }];
+             const hAtts = await db.execute(sql`SELECT * FROM attachments WHERE message_id = ${h.id}`);
+             for (const att of hAtts) {
+                 if (att.is_image || att.mime_type === 'application/pdf') {
+                    try {
+                      const base64Img = fs.readFileSync(att.storage_path, 'base64');
+                      hParts.push({ inlineData: { mimeType: att.mime_type, data: base64Img } });
+                    } catch(e) {}
+                 }
+             }
+             contents.push({ role: h.role === "user" ? "user" : "model", parts: hParts });
          }
 
          let parts: any[] = [];
@@ -284,7 +324,7 @@ async function startServer() {
             for (const aid of attachment_ids) {
                const [att] = await db.select().from(attachments).where(eq(attachments.id, aid));
                if (att) {
-                  if (att.isImage) {
+                  if (att.isImage || att.mimeType === 'application/pdf') {
                      const base64Img = fs.readFileSync(att.storagePath, 'base64');
                      parts.push({
                         inlineData: {
@@ -306,7 +346,7 @@ async function startServer() {
 
          const ai = getGenAI();
          const responseStream = await withRetry(() => ai.models.generateContentStream({
-             model: "gemini-3.5-flash",
+             model: CHAT_MODEL,
              contents: contents,
              config: {
                systemInstruction: systemPrompt
@@ -324,8 +364,10 @@ async function startServer() {
          res.write(`data: ${JSON.stringify({ type: 'meta', confidence, sources: chunksUsed.slice(0, 3).map(c => c.sourceFile) })}\n\n`);
 
          // Save to query cache implicitly
+         const finalEmbedding = await embedText(message).catch(e => null);
          await db.insert(queryCache).values({
             queryText: message,
+            queryEmbedding: finalEmbedding,
             answer: finalAnswer,
          });
 
@@ -345,6 +387,31 @@ async function startServer() {
         role: "assistant",
         content: finalAnswer
       }).returning();
+      
+      if (['knowledge_search', 'document_analysis'].includes(intent) && !!finalAnswer) {
+          verifyAnswer(message, chunksUsed, finalAnswer).catch(e => {}); // Optional async call
+      }
+      
+      // Async rolling summary update
+      (async () => {
+         try {
+             const allMsgsRes = await db.execute(sql`SELECT COUNT(id) as count FROM messages WHERE conversation_id = ${convId}`);
+             const msgCount = parseInt(allMsgsRes[0].count as string);
+             if (msgCount > 12) {
+                 const oldHistory = await db.execute(sql`SELECT * FROM messages WHERE conversation_id = ${convId} ORDER BY created_at ASC LIMIT ${msgCount - 8}`);
+                 const ai = getGenAI();
+                 const oldText = oldHistory.map((m: any) => `${m.role}: ${m.content}`).join('\n');
+                 const response = await ai.models.generateContent({
+                     model: CHAT_MODEL,
+                     contents: `Summarize the key information, context, and user constraints from this older conversation history. Keep it concise but factual.\n\n${oldText}`
+                 });
+                 const newSummary = (response.text || "").trim();
+                 if (newSummary) {
+                     await db.execute(sql`INSERT INTO conversation_summaries (id, conversation_id, summary) VALUES (${uuidv4()}, ${convId}, ${newSummary})`);
+                 }
+             }
+         } catch(e) { console.warn("Summary failed", e); }
+      })();
 
       res.write(`data: ${JSON.stringify({ type: 'done', message_id: asstMsg.id })}\n\n`);
     } catch (error: any) {

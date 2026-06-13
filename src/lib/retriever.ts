@@ -30,11 +30,9 @@ export async function embedText(text: string): Promise<number[]> {
       contents: text,
       config: { outputDimensionality: 768 }
     }));
-    const emb = response.embeddings?.[0]?.values || [];
-    const pad = new Array(3072 - emb.length).fill(0);
-    return emb.concat(pad);
+    return response.embeddings?.[0]?.values || [];
   } catch (error: any) {
-    console.warn("Embedding failed:", error?.message || "Unknown error");
+    console.error("Embedding failed:", error?.message || error);
     throw error;
   }
 }
@@ -44,7 +42,8 @@ export async function searchKnowledge(query: string, limit: number = 6) {
   try {
     const queryEmbedding = await embedText(query);
     
-    const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)})`;
+    // Explicitly cast the query embedding to vector(768) to match the schema
+    const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(768))`;
     
     const results = await db.select({
       id: knowledgeChunks.id,
@@ -53,12 +52,13 @@ export async function searchKnowledge(query: string, limit: number = 6) {
       similarity
     })
     .from(knowledgeChunks)
+    .where(sql`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(768)) > 0.5`)
     .orderBy(desc(similarity))
     .limit(limit);
 
-    return results;
+    return { results, error: false };
   } catch (error: any) {
-    console.warn('Error searching knowledge:', error?.message || "Unknown error");
-    return [];
+    console.error('Error searching knowledge:', error?.message || error);
+    return { results: [], error: true };
   }
 }
