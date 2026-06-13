@@ -127,6 +127,14 @@ export const sourceMetadata = pgTable('source_metadata', {
   lastIndexed: timestamp('last_indexed'),
 });
 
+export const suggestedPrompts = pgTable('suggested_prompts', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  icon: text('icon'),
+  title: text('title').notNull(),
+  description: text('description'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   conversations: many(conversations),

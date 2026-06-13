@@ -1,14 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
-import firebaseConfig from '../firebase-applet-config.json';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth } from './lib/firebase';
 import { Sidebar } from './components/Sidebar';
 import { MessageBubble } from './components/MessageBubble';
 import { InputBar } from './components/InputBar';
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const provider = new GoogleAuthProvider();
+import { AuthScreen } from './components/AuthScreen';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -19,7 +15,8 @@ export default function App() {
   const [messages, setMessages] = useState<any[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
+  const [suggestedPrompts, setSuggestedPrompts] = useState<any[]>([]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -34,8 +31,16 @@ export default function App() {
   useEffect(() => {
     if (user) {
       loadConversations();
+      loadSuggestedPrompts();
     }
   }, [user]);
+
+  const loadSuggestedPrompts = async () => {
+    const res = await apiFetch('/api/suggested-prompts');
+    if (res?.ok) {
+      setSuggestedPrompts(await res.json());
+    }
+  };
 
   useEffect(() => {
     if (currentConvId) {
@@ -237,20 +242,7 @@ export default function App() {
   if (loading) return null;
 
   if (!user) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-[var(--navy-800)]">
-        <div className="text-center p-8 border border-[var(--navy-600)] rounded-2xl bg-[var(--navy-800)] shadow-custom">
-          <h1 className="text-4xl font-bold mb-6 font-[var(--font-display)] text-[var(--white)] tracking-wide">DOLPHI AI</h1>
-          <p className="mb-8 text-[var(--navy-100)] max-w-sm mx-auto">Please sign in to access your secure workspace.</p>
-          <button 
-            onClick={() => signInWithPopup(auth, provider)}
-            className="px-6 py-2.5 bg-[var(--gold-400)] text-[var(--navy-900)] rounded-full font-semibold hover:bg-[var(--gold-300)] transition-colors"
-          >
-            Sign in with Google
-          </button>
-        </div>
-      </div>
-    );
+    return <AuthScreen />;
   }
 
   return (
@@ -305,24 +297,21 @@ export default function App() {
               <h1 className="text-2xl font-bold mb-2 text-brand-primary tracking-tight">Welcome to DOLPHI</h1>
               <p className="text-[15px] mb-8 text-gray-500 max-w-lg text-center leading-relaxed">Your intelligent document, knowledge base, and conversation assistant.</p>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl w-full">
-                {[
-                  { icon: '📝', title: 'Summarize Documents', desc: 'Upload PDFs or text files to get quick insights.' },
-                  { icon: '🔍', title: 'Search Knowledge Base', desc: 'Find exact information from your uploaded data.' },
-                  { icon: '🖼️', title: 'Analyze Images', desc: 'Upload visual data for detailed understanding.' },
-                  { icon: '📊', title: 'Compare Options', desc: 'Evaluate different approaches and make decisions.' },
-                ].map((item, i) => (
-                  <button 
-                    key={i}
-                    onClick={() => handlePromptClick(item.title)}
-                    className="p-4 rounded-xl flex flex-col text-left transition-all bg-white border border-brand-border hover:border-brand-accent hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] group shadow-sm h-full w-full"
-                  >
-                    <div className="text-xl mb-2">{item.icon}</div>
-                    <span className="text-[15px] font-semibold text-brand-primary mb-1">{item.title}</span>
-                    <span className="text-[13px] text-gray-500 leading-snug">{item.desc}</span>
-                  </button>
-                ))}
-              </div>
+              {suggestedPrompts.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl w-full">
+                  {suggestedPrompts.map((item) => (
+                    <button 
+                      key={item.id}
+                      onClick={() => handlePromptClick(item.title)}
+                      className="p-4 rounded-xl flex flex-col text-left transition-all bg-white border border-brand-border hover:border-brand-accent hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] group shadow-sm h-full w-full"
+                    >
+                      {item.icon && <div className="text-xl mb-2">{item.icon}</div>}
+                      <span className="text-[15px] font-semibold text-brand-primary mb-1">{item.title}</span>
+                      {item.description && <span className="text-[13px] text-gray-500 leading-snug">{item.description}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="pb-10">

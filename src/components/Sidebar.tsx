@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Plus, Search, MoreHorizontal, Check, X, Trash2, Edit2, Pin } from "lucide-react";
+import { UserProfile } from "./UserProfile";
 
 export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelete, onRename, onPin, isOpen, setIsOpen }) {
   const [search, setSearch] = useState("");
@@ -78,10 +79,16 @@ export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelet
           <div>
             <div className="px-3 mb-2 text-xs font-semibold text-white/50 uppercase tracking-wider">{pinned.length > 0 ? 'Recent' : 'Conversations'}</div>
             <div className="space-y-0.5">
-              {recent.map(c => <ChatItem key={c.id} conv={c} {...{currentConvId, onSelect, editingId, setEditingId, editTitle, setEditTitle, saveEdit, startEdit, menuOpenId, setMenuOpenId, onPin, setShowDeleteModalId}} />)}
+              {recent.length > 0 ? (
+                recent.map(c => <ChatItem key={c.id} conv={c} {...{currentConvId, onSelect, editingId, setEditingId, editTitle, setEditTitle, saveEdit, startEdit, menuOpenId, setMenuOpenId, onPin, setShowDeleteModalId}} />)
+              ) : (
+                <div className="px-3 py-2 text-xs text-brand-accent/70 font-medium">No conversations yet.</div>
+              )}
             </div>
           </div>
         </div>
+
+        <UserProfile />
       </div>
 
       {showDeleteModalId && (

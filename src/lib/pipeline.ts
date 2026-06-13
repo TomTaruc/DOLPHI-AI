@@ -34,7 +34,7 @@ export async function rewriteQuery(userMessage: string, history: any[]): Promise
     try {
         const prompt = `You are a search query optimizer. Given a conversational message and conversation context, rewrite the message as a single standalone search query that captures the full intent without pronouns or references. Output only the rewritten query, nothing else.\n\nContext: ${JSON.stringify(history.slice(-4))}\n\nUser Message: ${userMessage}`;
         const response = await withRetry(() => ai.models.generateContent({
-            model: 'gemini-pro',
+            model: 'gemini-3.5-flash',
             contents: prompt,
             config: { maxOutputTokens: 60 }
         }));
@@ -68,7 +68,7 @@ export async function detectIntent(userMessage: string): Promise<string> {
         // If heuristic is low confidence, use fallback
         const prompt = `Classify intent into exactly one of: greeting, small_talk, knowledge_search, document_analysis, image_analysis, follow_up, comparison, summarization, general_question.\nUser Message: ${userMessage}\nReturn ONLY the intent string.`;
         const response = await withRetry(() => ai.models.generateContent({
-            model: 'gemini-pro',
+            model: 'gemini-3.5-flash',
             contents: prompt
         }));
         return response.text?.trim() || 'knowledge_search';
@@ -107,7 +107,7 @@ export async function verifyAnswer(query: string, chunks: any[], draft: string):
     try {
         const prompt = `Verify this answer against the chunks.\nQuery: ${query}\nChunks: ${JSON.stringify(chunks)}\nDraft: ${draft}\n\nRespond with JSON: { "supported": true/false, "confidence": 0-1, "unsupported_claims": [] }`;
         const response = await withRetry(() => ai.models.generateContent({
-            model: 'gemini-pro',
+            model: 'gemini-3.5-flash',
             contents: prompt,
             config: { responseMimeType: 'application/json' }
         }));

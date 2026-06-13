@@ -30,8 +30,6 @@ function chunkText(text: string, chunkSize: number = 500): string[] {
 export async function indexKnowledgeBase() {
   if (!fs.existsSync(KNOWLEDGE_DIR)) {
     fs.mkdirSync(KNOWLEDGE_DIR, { recursive: true });
-    // Write sample Knowledge
-    fs.writeFileSync(path.join(KNOWLEDGE_DIR, 'example.md'), '# Welcome to Dolphi\n\nDolphi is a smart AI assistant capable of reasoning, retrieving contextual knowledge, and analyzing documents and images. It has access to real-time chat context and a knowledge base built on PostgreSQL and pgvector.');
     fs.writeFileSync(path.join(KNOWLEDGE_DIR, 'metadata.json'), JSON.stringify({ version: "1.0.0", last_updated: new Date().toISOString() }));
   }
 

@@ -1,9 +1,10 @@
 {
-  "projectId": "reverberant-airship-lpnh2",
-  "appId": "1:757626665311:web:ba6dfdd721336716cc1eea",
-  "apiKey": "AIzaSyC4IkuTi1UTwgSGr6TPPXlBiA03sBZwOLg",
-  "authDomain": "reverberant-airship-lpnh2.firebaseapp.com",
-  "storageBucket": "reverberant-airship-lpnh2.firebasestorage.app",
-  "messagingSenderId": "757626665311",
+  "projectId": "dolphi-bf40f",
+  "appId": "1:500553863951:web:80f3c3af9eab856bc3647a",
+  "apiKey": "AIzaSyDztnLxh46lh3r97wTfOTTMI8QMMVM5PNU",
+  "authDomain": "dolphi-bf40f.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-cd501249-c5b3-453b-905f-c870f725ea19",
+  "storageBucket": "dolphi-bf40f.firebasestorage.app",
+  "messagingSenderId": "500553863951",
   "measurementId": ""
 }

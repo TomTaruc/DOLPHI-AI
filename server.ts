@@ -5,7 +5,7 @@ import multer from "multer";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "./src/db/index.ts";
-import { conversations, messages, attachments, retrievalLogs, queryCache } from "./src/db/schema.ts";
+import { conversations, messages, attachments, retrievalLogs, queryCache, suggestedPrompts } from "./src/db/schema.ts";
 import { eq, desc, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { indexKnowledgeBase } from "./src/lib/indexer.ts";
@@ -76,6 +76,15 @@ async function startServer() {
       }
     } catch {
       res.json({ version: "1.0.0", last_updated: new Date().toISOString() });
+    }
+  });
+
+  app.get("/api/suggested-prompts", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const prompts = await db.select().from(suggestedPrompts).limit(4);
+      res.json(prompts);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch prompts" });
     }
   });
 
@@ -196,7 +205,7 @@ async function startServer() {
         try {
           const ai = getGenAI();
           const response = await ai.models.generateContent({
-            model: "gemini-pro",
+            model: "gemini-3.5-flash",
             contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
           });
           const title = response.text?.trim();
@@ -297,7 +306,7 @@ async function startServer() {
 
          const ai = getGenAI();
          const responseStream = await withRetry(() => ai.models.generateContentStream({
-             model: "gemini-pro",
+             model: "gemini-3.5-flash",
              contents: contents,
              config: {
                systemInstruction: systemPrompt
