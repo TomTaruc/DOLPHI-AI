@@ -4,22 +4,22 @@ export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelet
   const today = new Date().toISOString().split('T')[0];
 
   return (
-    <div className="w-[260px] flex-shrink-0 flex flex-col h-screen h-[100dvh]" style={{ backgroundColor: 'var(--graphite)' }}>
+    <div className="w-[260px] flex-shrink-0 flex flex-col h-screen h-[100dvh]" style={{ backgroundColor: 'var(--navy-800)' }}>
       <div className="p-4 flex flex-col flex-grow">
-        <h1 className="text-[20px] italic mb-6" style={{ fontFamily: 'var(--font-display)', color: 'var(--bone)' }}>
-          🐬 DOLPHI AI
+        <h1 className="text-[20px] font-bold mb-6 tracking-wide" style={{ fontFamily: 'var(--font-display)', color: 'var(--white)' }}>
+          DOLPHI
         </h1>
         
         <button 
           onClick={onNew}
-          className="w-full py-2 flex items-center justify-center rounded-[8px] border mb-6 transition-colors"
-          style={{ backgroundColor: 'var(--slate)', borderColor: 'var(--green)', color: 'var(--bone)' }}
+          className="w-full py-2.5 flex items-center justify-center rounded-[8px] font-semibold transition-colors hover:opacity-90"
+          style={{ backgroundColor: 'var(--gold-400)', color: 'var(--navy-900)' }}
         >
-          <Plus size={16} className="mr-2" style={{ color: 'var(--green)' }}/> New Chat
+          <Plus size={18} className="mr-2" strokeWidth={2.5}/> New Chat
         </button>
 
-        <div className="text-[11px] uppercase tracking-[0.08em] mb-2" style={{ color: 'var(--ash)' }}>
-          ── Recent ──
+        <div className="text-[12px] font-semibold tracking-wider mb-3 mt-4" style={{ color: 'var(--navy-300)' }}>
+          Recent
         </div>
 
         <div className="flex-1 overflow-y-auto w-full -mx-4 px-4 custom-scrollbar space-y-1">
@@ -29,11 +29,11 @@ export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelet
               <div 
                 key={conv.id}
                 onClick={() => onSelect(conv.id)}
-                className="group flex items-center justify-between h-[36px] px-[12px] cursor-pointer"
+                className="group flex items-center justify-between h-[36px] px-[12px] cursor-pointer rounded-[4px] transition-colors"
                 style={{
-                  backgroundColor: isActive ? 'var(--graphite)' : 'transparent',
-                  borderLeft: isActive ? '2px solid var(--green)' : '2px solid transparent',
-                  color: isActive ? 'var(--bone)' : 'var(--fog)'
+                  backgroundColor: isActive ? 'var(--navy-700)' : 'transparent',
+                  borderLeft: isActive ? '3px solid var(--gold-400)' : '3px solid transparent',
+                  color: isActive ? 'var(--white)' : 'var(--navy-100)'
                 }}
               >
                 <div className="truncate text-[14px]">
@@ -44,9 +44,10 @@ export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelet
                     e.stopPropagation();
                     if(confirm('Delete conversation?')) onDelete(conv.id);
                   }}
-                  className="opacity-0 group-hover:opacity-100 p-1"
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:text-white"
+                  style={{ color: 'var(--navy-300)' }}
                 >
-                  <Trash2 size={14} style={{ color: 'var(--ash)' }} />
+                  <Trash2 size={14} />
                 </button>
               </div>
             );
@@ -54,8 +55,8 @@ export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelet
         </div>
       </div>
       
-      <div className="p-4" style={{ borderTop: '1px solid var(--mist)' }}>
-        <div className="text-[11px]" style={{ color: 'var(--ash)' }}>
+      <div className="p-4" style={{ borderTop: '1px solid var(--navy-700)' }}>
+        <div className="text-[11px]" style={{ color: 'var(--navy-300)' }}>
           DOLPHI AI v1.0
         </div>
       </div>

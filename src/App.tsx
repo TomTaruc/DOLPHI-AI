@@ -211,15 +211,15 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-[var(--ink)]">
-        <div className="text-center p-8 border border-[var(--mist)] rounded-2xl bg-[var(--graphite)]">
-          <h1 className="text-3xl mb-6 font-[var(--font-display)] text-[var(--bone)]">DOLPHI AI</h1>
-          <p className="mb-6 text-[var(--fog)] max-w-sm">Secure Cloud SQL setup requires authentication. Please sign in to access your database.</p>
+      <div className="h-screen w-full flex items-center justify-center bg-[var(--navy-800)]">
+        <div className="text-center p-8 border border-[var(--navy-600)] rounded-2xl bg-[var(--navy-800)] shadow-custom">
+          <h1 className="text-4xl font-bold mb-6 font-[var(--font-display)] text-[var(--white)] tracking-wide">DOLPHI AI</h1>
+          <p className="mb-8 text-[var(--navy-100)] max-w-sm mx-auto">Please sign in to access your secure workspace.</p>
           <button 
             onClick={() => signInWithPopup(auth, provider)}
-            className="px-6 py-2 bg-[var(--green)] text-[var(--ink)] rounded-full font-medium"
+            className="px-6 py-2.5 bg-[var(--gold-400)] text-[var(--navy-900)] rounded-full font-semibold hover:bg-[var(--gold-300)] transition-colors"
           >
-            Google Sign-in
+            Sign in with Google
           </button>
         </div>
       </div>
@@ -241,31 +241,39 @@ export default function App() {
       />
       
       <div className="flex-1 flex flex-col relative h-full">
-        <div className="h-[56px] flex items-center px-6 shrink-0" style={{ backgroundColor: 'var(--graphite)', borderBottom: '1px solid var(--mist)' }}>
-          <h2 className="text-[16px] italic font-[var(--font-display)]" style={{ color: 'var(--bone)' }}>DOLPHI AI</h2>
+        <div className="h-[56px] flex items-center px-6 shrink-0 z-10" style={{ backgroundColor: 'var(--navy-800)', borderBottom: '1px solid var(--navy-900)' }}>
+          <div className="relative">
+             <h2 className="text-[16px] font-bold tracking-wide font-[var(--font-display)]" style={{ color: 'var(--white)' }}>DOLPHI</h2>
+             {isGenerating && <div className="absolute -right-3 top-0 w-2 h-2 rounded-full border border-white animate-pulse" style={{ backgroundColor: 'var(--gold-400)' }}></div>}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-[10%] pt-8 pb-4 custom-scrollbar">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col justify-center items-center -mt-10">
-              <h1 className="text-[32px] mb-2 font-[var(--font-display)]" style={{ color: 'var(--bone)' }}>DOLPHI AI</h1>
-              <p className="text-[16px] mb-12" style={{ color: 'var(--fog)' }}>What can I help you with?</p>
+              <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 shadow-custom" style={{ backgroundColor: 'var(--gold-400)', color: 'var(--navy-900)' }}>
+                <span className="text-3xl">🐬</span>
+              </div>
+              <h1 className="text-[32px] font-bold mb-2 font-[var(--font-display)]" style={{ color: 'var(--navy-900)' }}>DOLPHI</h1>
+              <p className="text-[16px] mb-12" style={{ color: 'var(--navy-600)' }}>What can I help you with today?</p>
               
               <div className="grid grid-cols-2 gap-4 max-w-2xl w-full">
                 {[
-                  { icon: '📋', text: 'Summarize docs' },
-                  { icon: '🔍', text: 'Search knowledge' },
-                  { icon: '🖼️', text: 'Analyze image' },
+                  { icon: '📋', text: 'Summarize documents' },
+                  { icon: '🔍', text: 'Search knowledge base' },
+                  { icon: '🖼️', text: 'Analyze an image' },
                   { icon: '📊', text: 'Compare options' },
                 ].map((item, i) => (
                   <button 
                     key={i}
                     onClick={() => handlePromptClick(item.text)}
-                    className="p-4 rounded-[12px] flex items-center text-left transition-colors group hover:border-[var(--green-dim)]"
-                    style={{ backgroundColor: 'var(--slate)', border: '1px solid var(--mist)' }}
+                    className="p-4 rounded-[12px] flex items-center text-left transition-all hover:shadow-custom group"
+                    style={{ backgroundColor: 'var(--white)', border: '1.5px solid var(--gray-200)' }}
                   >
-                    <span className="mr-3 text-lg">{item.icon}</span>
-                    <span className="text-[14px] group-hover:text-[var(--bone)]" style={{ color: 'var(--fog)' }}>{item.text}</span>
+                    <div className="w-10 h-10 rounded-[8px] flex items-center justify-center text-lg mr-4 bg-[var(--navy-50)]">
+                      {item.icon}
+                    </div>
+                    <span className="text-[14px] font-medium group-hover:text-[var(--navy-900)] text-[var(--navy-800)] mr-2 flex-grow">{item.text}</span>
                   </button>
                 ))}
               </div>
@@ -280,15 +288,12 @@ export default function App() {
           )}
         </div>
 
-        <div className="shrink-0 pt-2 pb-6" style={{ background: 'linear-gradient(to bottom, transparent, var(--ink) 10%)' }}>
+        <div className="shrink-0 pt-2 pb-6" style={{ background: 'linear-gradient(to bottom, transparent, var(--gray-50) 10%)' }}>
           <InputBar onSend={handleSend} isGenerating={isGenerating} onStop={handleStop} />
           
           <div className="text-center mt-4">
-             <div className="text-[11px]" style={{ color: 'var(--ash)' }}>
-               Powered by DOLPHI AI &middot; AI responses may contain mistakes
-             </div>
-             <div className="text-[11px]" style={{ color: 'var(--ash)' }}>
-               Knowledge Base v1.0.0 &middot; Last updated {new Date().toLocaleDateString()}
+             <div className="text-[11px]" style={{ color: 'var(--navy-300)' }}>
+               Powered by DOLPHI AI
              </div>
           </div>
         </div>

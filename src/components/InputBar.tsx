@@ -55,17 +55,17 @@ export function InputBar({ onSend, isGenerating, onStop }) {
 
   return (
     <div className="w-full flex justify-center px-6">
-      <div className="w-full max-w-4xl flex flex-col group relative rounded-[12px] focus-within:border-[var(--green-dim)] transition-colors" 
-           style={{ backgroundColor: 'var(--slate)', border: '1px solid var(--mist)' }}>
+      <div className="w-full max-w-4xl flex flex-col group relative rounded-2xl transition-all shadow-custom" 
+           style={{ backgroundColor: 'var(--white)', border: '1.5px solid var(--gray-300)' }}>
         
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 p-3 pb-0">
             {attachments.map((att, i) => (
-              <div key={att.id} className="flex items-center rounded-[8px] px-3 py-1.5" style={{ backgroundColor: 'var(--slate)', border: '1px solid var(--mist)' }}>
+              <div key={att.id} className="flex items-center rounded-[8px] px-3 py-1.5" style={{ backgroundColor: 'var(--navy-50)', border: '1px solid var(--navy-100)' }}>
                 {att.isImage ? <span className="mr-2">🖼</span> : <span className="mr-2">📄</span>}
-                <span className="text-[13px] truncate max-w-[120px] mr-3" style={{ color: 'var(--fog)' }}>{att.name}</span>
+                <span className="text-[13px] truncate max-w-[120px] mr-3 font-medium" style={{ color: 'var(--navy-800)' }}>{att.name}</span>
                 <button onClick={() => removeAttachment(i)} className="hover:opacity-80">
-                  <X size={14} style={{ color: 'var(--ash)' }}/>
+                  <X size={14} style={{ color: 'var(--navy-600)' }}/>
                 </button>
               </div>
             ))}
@@ -77,7 +77,7 @@ export function InputBar({ onSend, isGenerating, onStop }) {
             className="p-2.5 mx-1"
             onClick={() => fileInputRef.current?.click()}
           >
-            <Paperclip size={18} style={{ color: 'var(--ash)' }} />
+            <Paperclip size={20} className="hover:text-[var(--navy-800)] transition-colors" style={{ color: 'var(--navy-300)' }} />
           </button>
           
           <input 
@@ -94,29 +94,30 @@ export function InputBar({ onSend, isGenerating, onStop }) {
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask anything..."
-            className="flex-1 max-h-[200px] min-h-[44px] bg-transparent border-none outline-none resize-none py-3 custom-scrollbar"
-            style={{ color: 'var(--bone)' }}
+            className="flex-1 max-h-[200px] min-h-[44px] bg-transparent border-none outline-none resize-none py-3 custom-scrollbar text-[15px]"
+            style={{ color: 'var(--navy-900)' }}
             rows={1}
           />
           
           {isGenerating ? (
             <button 
               onClick={onStop}
-              className="w-[32px] h-[32px] rounded-full flex justify-center items-center m-1 hover:opacity-80 transition-opacity"
-              style={{ backgroundColor: 'var(--slate)', border: '1px solid var(--mist)' }}
+              className="w-[36px] h-[36px] rounded-full flex justify-center items-center m-1 hover:opacity-80 transition-opacity"
+              style={{ backgroundColor: 'var(--navy-100)' }}
             >
-              <Square size={14} fill="var(--mist)" style={{ color: 'var(--mist)' }} />
+              <Square size={14} fill="var(--navy-600)" style={{ color: 'var(--navy-600)' }} />
             </button>
           ) : (
             <button 
               onClick={handleSend}
               disabled={!text.trim() && attachments.length === 0}
-              className="w-[32px] h-[32px] rounded-full flex justify-center items-center m-1 transition-colors disabled:opacity-50"
+              className="w-[36px] h-[36px] rounded-full flex justify-center items-center m-1 transition-colors disabled:opacity-50"
               style={{ 
-                backgroundColor: (text.trim() || attachments.length > 0) ? 'var(--green)' : 'var(--mist)',
+                backgroundColor: (text.trim() || attachments.length > 0) ? 'var(--navy-800)' : 'var(--gray-200)',
+                color: 'var(--white)'
               }}
             >
-              <ArrowRight size={16} strokeWidth={2.5} style={{ color: 'var(--ink)' }} />
+              <ArrowRight size={18} strokeWidth={2.5} color="var(--white)" />
             </button>
           )}
         </div>
