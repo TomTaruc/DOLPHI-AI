@@ -1,16 +1,20 @@
-import { Paperclip, ArrowRight, X, Square } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Paperclip, ArrowUp, X, Square } from 'lucide-react';
+import { useRef, useState, useEffect } from 'react';
 
 export function InputBar({ onSend, isGenerating, onStop }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSend = () => {
     if (!text.trim() && attachments.length === 0) return;
     onSend(text, attachments);
     setText('');
     setAttachments([]);
+    if(textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+    }
   };
 
   const handleKeyDown = (e: any) => {
@@ -18,6 +22,14 @@ export function InputBar({ onSend, isGenerating, onStop }) {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  const handleInput = (e: any) => {
+     setText(e.target.value);
+     if(textareaRef.current) {
+         textareaRef.current.style.height = 'auto';
+         textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+     }
   };
 
   const handleFileChange = async (e: any) => {
@@ -54,18 +66,31 @@ export function InputBar({ onSend, isGenerating, onStop }) {
   };
 
   return (
-    <div className="w-full flex justify-center px-6">
-      <div className="w-full max-w-4xl flex flex-col group relative rounded-2xl transition-all shadow-custom" 
-           style={{ backgroundColor: 'var(--white)', border: '1.5px solid var(--gray-300)' }}>
+    <div className="w-full relative">
+      <div className="w-full flex flex-col group relative rounded-[16px] transition-all shadow-sm bg-brand-primary focus-within:shadow-[0_0_0_2px_rgba(245,197,24,0.5)]">
         
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 p-3 pb-0">
             {attachments.map((att, i) => (
-              <div key={att.id} className="flex items-center rounded-[8px] px-3 py-1.5" style={{ backgroundColor: 'var(--navy-50)', border: '1px solid var(--navy-100)' }}>
-                {att.isImage ? <span className="mr-2">🖼</span> : <span className="mr-2">📄</span>}
-                <span className="text-[13px] truncate max-w-[120px] mr-3 font-medium" style={{ color: 'var(--navy-800)' }}>{att.name}</span>
-                <button onClick={() => removeAttachment(i)} className="hover:opacity-80">
-                  <X size={14} style={{ color: 'var(--navy-600)' }}/>
+              <div key={att.id} className="relative flex items-center rounded-xl bg-white/10 border border-white/20 pr-1 group/att">
+                {att.isImage ? (
+                  <div className="w-12 h-12 rounded-l-xl overflow-hidden bg-black/20 border-r border-white/20">
+                    <img src={att.preview || ''} className="w-full h-full object-cover" alt="preview" />
+                  </div>
+                ) : (
+                  <div className="w-10 h-10 flex items-center justify-center bg-white/10 rounded-lg ml-1 border border-white/10">
+                    <span className="text-xl">📄</span>
+                  </div>
+                )}
+                <div className="flex flex-col px-3 max-w-[140px]">
+                   <span className="text-xs truncate font-medium text-white">{att.name}</span>
+                   <span className="text-[11px] text-white/50 mt-0.5">{Math.round(att.size/1024)} KB</span>
+                </div>
+                <button 
+                  onClick={() => removeAttachment(i)} 
+                  className="absolute -top-2 -right-2 w-[22px] h-[22px] rounded-full bg-brand-accent hover:bg-[#e4b400] text-brand-primary flex items-center justify-center shadow-sm opacity-0 group-hover/att:opacity-100 transition-opacity z-10"
+                >
+                  <X size={12} strokeWidth={3} />
                 </button>
               </div>
             ))}
@@ -74,10 +99,11 @@ export function InputBar({ onSend, isGenerating, onStop }) {
 
         <div className="flex items-end p-2 pb-2">
           <button 
-            className="p-2.5 mx-1"
+            className="p-2.5 mx-1 rounded-xl text-white hover:text-brand-accent hover:bg-white/10 transition-colors"
             onClick={() => fileInputRef.current?.click()}
+            title="Attach files"
           >
-            <Paperclip size={20} className="hover:text-[var(--navy-800)] transition-colors" style={{ color: 'var(--navy-300)' }} />
+            <Paperclip size={22} />
           </button>
           
           <input 
@@ -90,34 +116,31 @@ export function InputBar({ onSend, isGenerating, onStop }) {
           />
           
           <textarea
+            ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything..."
-            className="flex-1 max-h-[200px] min-h-[44px] bg-transparent border-none outline-none resize-none py-3 custom-scrollbar text-[15px]"
-            style={{ color: 'var(--navy-900)' }}
+            placeholder="Message DOLPHI..."
+            className="flex-1 max-h-[250px] min-h-[44px] bg-transparent border-none outline-none resize-none py-[14px] px-2 custom-scrollbar text-[15px] text-white placeholder-white/65 min-w-0 leading-relaxed"
             rows={1}
+            style={{ overflowY: text.split('\n').length > 5 ? 'auto' : 'hidden' }}
           />
           
           {isGenerating ? (
             <button 
               onClick={onStop}
-              className="w-[36px] h-[36px] rounded-full flex justify-center items-center m-1 hover:opacity-80 transition-opacity"
-              style={{ backgroundColor: 'var(--navy-100)' }}
+              className="w-9 h-9 rounded-xl flex justify-center items-center m-1.5 transition-colors bg-white/20 hover:bg-white/30 text-white"
+              title="Stop generating"
             >
-              <Square size={14} fill="var(--navy-600)" style={{ color: 'var(--navy-600)' }} />
+              <Square size={14} fill="currentColor" />
             </button>
           ) : (
             <button 
               onClick={handleSend}
               disabled={!text.trim() && attachments.length === 0}
-              className="w-[36px] h-[36px] rounded-full flex justify-center items-center m-1 transition-colors disabled:opacity-50"
-              style={{ 
-                backgroundColor: (text.trim() || attachments.length > 0) ? 'var(--navy-800)' : 'var(--gray-200)',
-                color: 'var(--white)'
-              }}
+              className="w-9 h-9 flex-shrink-0 rounded-xl flex justify-center items-center m-1.5 transition-all disabled:opacity-50 disabled:bg-white/10 disabled:text-white/30 text-brand-primary bg-brand-accent hover:bg-[#e4b400]"
             >
-              <ArrowRight size={18} strokeWidth={2.5} color="var(--white)" />
+              <ArrowUp size={18} strokeWidth={2.5} />
             </button>
           )}
         </div>

@@ -1,32 +1,36 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Poppins", sans-serif;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-brand-primary: #1a3a5c;
+  --color-brand-accent: #f5c518;
+  --color-brand-light: #f8fafc;
+  --color-brand-border: #e2e8f0;
 }
 
 :root {
-  --navy-900: #0f1e35;
-  --navy-800: #1a2e4a;
-  --navy-700: #1e3558;
-  --navy-600: #243f6a;
-  --navy-300: #7aaad4;
-  --navy-100: #deeaf7;
-  --navy-50:  #f0f6fd;
-  --gold-400: #f5c518;
-  --gold-300: #f9d54a;
-  --white:    #ffffff;
-  --gray-50:  #f8f9fa;
-  --gray-200: #e9ecef;
-  --gray-300: #dee2e6;
+  --brand-primary: #1a3a5c;
+  --brand-accent: #f5c518;
+  --brand-light: #f8fafc;
+  --brand-border: #e2e8f0;
+  
+  --success: #16a34a;
+  --warning: #d97706;
+  --error: #dc2626;
+  --info: #2563eb;
+  
+  --foreground: #1f2937;
+  --background: var(--brand-light);
+  --white: #ffffff;
 }
 
 body {
-  background-color: var(--gray-50);
-  color: var(--navy-900);
+  background-color: var(--background);
+  color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 15px;
+  line-height: 1.5;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -37,25 +41,28 @@ body {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--gray-300);
+  background: #cbd5e1;
   border-radius: 3px;
 }
 
 .markdown-body {
   font-family: inherit;
-  color: var(--navy-900);
+  color: var(--foreground);
+  line-height: 1.6;
 }
 .markdown-body p {
   margin-bottom: 1em;
 }
 .markdown-body h1, .markdown-body h2, .markdown-body h3 {
-  color: var(--navy-900);
+  color: var(--brand-primary);
   font-weight: 600;
   margin-top: 1.5em;
   margin-bottom: 0.5em;
+  line-height: 1.2;
 }
 .markdown-body h1 { font-size: 1.5em; }
-.markdown-body h2 { font-size: 1.3em; }
+.markdown-body h2 { font-size: 1.25em; }
+.markdown-body h3 { font-size: 1.1em; }
 .markdown-body ul {
   list-style-type: disc;
   padding-left: 1.5em;
@@ -69,8 +76,31 @@ body {
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
+  margin-bottom: 1em;
 }
 .markdown-body th, .markdown-body td {
-  border: 1px solid var(--gray-200);
+  border: 1px solid var(--brand-border);
   padding: 8px;
 }
+.markdown-body code {
+  background-color: #f1f5f9;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.9em;
+  color: #0f172a;
+}
+.markdown-body pre code {
+  background-color: transparent;
+  padding: 0;
+  color: inherit;
+}
+.markdown-body pre {
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+

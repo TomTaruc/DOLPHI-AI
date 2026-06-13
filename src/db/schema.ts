@@ -18,7 +18,7 @@ import { customType } from 'drizzle-orm/pg-core';
 
 const vectorType = customType<{ data: number[]; driverData: string }>({
   dataType() {
-    return 'vector(384)';
+    return 'vector(3072)';
   },
   toDriver(value: number[]): string {
     return '[' + value.join(',') + ']';
@@ -42,6 +42,7 @@ export const conversations = pgTable('conversations', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').references(() => users.id).notNull(),
   title: text('title').default('New Chat').notNull(),
+  isPinned: boolean('is_pinned').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

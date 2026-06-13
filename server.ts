@@ -12,7 +12,24 @@ import { indexKnowledgeBase } from "./src/lib/indexer.ts";
 import { rewriteQuery, detectIntent, checkSemanticCache, verifyAnswer } from "./src/lib/pipeline.ts";
 import { searchKnowledge } from "./src/lib/retriever.ts";
 import fetch from "node-fetch";
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI } from "@google/genai";
+
+function getGenAI() {
+  return new GoogleGenAI({ 
+    apiKey: process.env.GEMINI_API_KEY || 'dummy',
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+  });
+}
+
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (retries === 0 || error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429')) throw error;
+    await new Promise(r => setTimeout(r, delay));
+    return withRetry(fn, retries - 1, delay * 2);
+  }
+}
 
 // File upload setup
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
@@ -120,6 +137,33 @@ async function startServer() {
     });
   });
 
+  app.put("/api/conversations/:id/title", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { title } = req.body;
+      if (!title) return res.status(400).json({ error: "Title required" });
+      const [updated] = await db.update(conversations)
+        .set({ title, updatedAt: new Date() })
+        .where(eq(conversations.id, req.params.id))
+        .returning();
+      res.json(updated);
+    } catch(err) {
+      res.status(500).json({ error: "Failed to rename" });
+    }
+  });
+
+  app.put("/api/conversations/:id/pin", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { isPinned } = req.body;
+      const [updated] = await db.update(conversations)
+        .set({ isPinned: !!isPinned, updatedAt: new Date() })
+        .where(eq(conversations.id, req.params.id))
+        .returning();
+      res.json(updated);
+    } catch(err) {
+      res.status(500).json({ error: "Failed to pin" });
+    }
+  });
+
   app.get("/api/files/:id", requireAuth, async (req: AuthRequest, res) => {
     const [att] = await db.select().from(attachments).where(eq(attachments.id, req.params.id));
     if (!att) return res.status(404).json({ error: "Not found" });
@@ -146,6 +190,23 @@ async function startServer() {
             await db.execute(sql`UPDATE attachments SET conversation_id = ${convId} WHERE id = ${aid}`);
          }
       }
+
+      // Generate a better title async
+      (async () => {
+        try {
+          const ai = getGenAI();
+          const response = await ai.models.generateContent({
+            model: "gemini-pro",
+            contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
+          });
+          const title = response.text?.trim();
+          if (title) {
+            await db.update(conversations).set({ title }).where(eq(conversations.id, convId));
+          }
+        } catch (e: any) {
+           console.warn("Auto-title failed:", e?.message || "Unknown error");
+        }
+      })();
     }
 
     res.writeHead(200, {
@@ -198,16 +259,57 @@ async function startServer() {
 
          const systemPrompt = `You are DOLPHI AI...\n\nRETRIEVED KNOWLEDGE (confidence: ${confidence}):\n${contextChunksText}\n\nINSTRUCTIONS:\nAnswer based on the retrieved knowledge. Priority Order:\n1. Uploaded Files\n2. Retrieved Knowledge\n3. Conversation Memory\n4. Model Knowledge\nIf retrieval fails or confidence < 0.3, continue answering using general model knowledge, clearly distinguishing it.`;
 
-         const aiSdk = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-         const responseStream = await aiSdk.models.generateContentStream({
-            model: "gemini-2.5-flash",
-            contents: systemPrompt + "\\n\\nUser: " + message
-         });
+         const contents: any[] = [];
+
+         // Add history
+         if (history && history.length > 0) {
+            for (const h of history.slice(-5)) {
+               contents.push({ role: h.role === "user" ? "user" : "model", parts: [{ text: h.content || "" }] });
+            }
+         }
+
+         let parts: any[] = [];
+         parts.push({ text: message });
+
+         if (attachment_ids && attachment_ids.length > 0) {
+            for (const aid of attachment_ids) {
+               const [att] = await db.select().from(attachments).where(eq(attachments.id, aid));
+               if (att) {
+                  if (att.isImage) {
+                     const base64Img = fs.readFileSync(att.storagePath, 'base64');
+                     parts.push({
+                        inlineData: {
+                          mimeType: att.mimeType,
+                          data: base64Img
+                        }
+                     });
+                  } else {
+                     const txtContent = fs.readFileSync(att.storagePath, 'utf8');
+                     parts.push({
+                        text: `\n\n[Attached File: ${att.originalName}]\n${txtContent.substring(0, 10000)}`
+                     });
+                  }
+               }
+            }
+         }
+
+         contents.push({ role: "user", parts: parts });
+
+         const ai = getGenAI();
+         const responseStream = await withRetry(() => ai.models.generateContentStream({
+             model: "gemini-pro",
+             contents: contents,
+             config: {
+               systemInstruction: systemPrompt
+             }
+         }));
 
          for await (const chunk of responseStream) {
-            const text = chunk.text;
-            finalAnswer += text;
-            res.write(`data: ${JSON.stringify({ type: 'token', content: text })}\n\n`);
+            const text = (chunk as any).text || "";
+            if (text) {
+               finalAnswer += text;
+               res.write(`data: ${JSON.stringify({ type: 'token', content: text })}\n\n`);
+            }
          }
 
          res.write(`data: ${JSON.stringify({ type: 'meta', confidence, sources: chunksUsed.slice(0, 3).map(c => c.sourceFile) })}\n\n`);

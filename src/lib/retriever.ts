@@ -1,36 +1,49 @@
-import { pipeline, env } from '@xenova/transformers';
 import { db } from '../db/index.ts';
 import { knowledgeChunks } from '../db/schema.ts';
 import { sql, desc } from 'drizzle-orm';
+import { GoogleGenAI } from '@google/genai';
 
-// Disable remote models for safety if needed, but we do need to download it once.
-env.allowLocalModels = false; 
-env.allowRemoteModels = true;
+function getGenAI() {
+  return new GoogleGenAI({ 
+    apiKey: process.env.GEMINI_API_KEY || 'dummy_key',
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+  });
+}
 
-let extractor: any = null;
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'gemini-embedding-2-preview';
 
-// Initialize model
-export async function getExtractor() {
-  if (!extractor) {
-    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (retries === 0 || error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429')) throw error;
+    await new Promise(r => setTimeout(r, delay));
+    return withRetry(fn, retries - 1, delay * 2);
   }
-  return extractor;
 }
 
 export async function embedText(text: string): Promise<number[]> {
-  const ext = await getExtractor();
-  const output = await ext(text, { pooling: 'mean', normalize: true });
-  return Array.from(output.data);
+  const ai = getGenAI();
+  try {
+    const response = await withRetry(() => ai.models.embedContent({
+      model: EMBEDDING_MODEL,
+      contents: text,
+      config: { outputDimensionality: 768 }
+    }));
+    const emb = response.embeddings?.[0]?.values || [];
+    const pad = new Array(3072 - emb.length).fill(0);
+    return emb.concat(pad);
+  } catch (error: any) {
+    console.warn("Embedding failed:", error?.message || "Unknown error");
+    throw error;
+  }
 }
 
-// Simple BM25 proxy using Postgres ILIKE or we can implement real BM25.
-// Since we don't have rank_bm25, we'll do tsvector full text search in Postgres for BM25-like behavior.
+// Simple vector search
 export async function searchKnowledge(query: string, limit: number = 6) {
   try {
     const queryEmbedding = await embedText(query);
     
-    // We can do a hybrid search using both full text search and vector similarity if requested.
-    // For simplicity here, we'll just use HNSW vector similarity 
     const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)})`;
     
     const results = await db.select({
@@ -44,8 +57,8 @@ export async function searchKnowledge(query: string, limit: number = 6) {
     .limit(limit);
 
     return results;
-  } catch (error) {
-    console.error('Error searching knowledge:', error);
+  } catch (error: any) {
+    console.warn('Error searching knowledge:', error?.message || "Unknown error");
     return [];
   }
 }
