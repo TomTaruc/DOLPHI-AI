@@ -4,7 +4,7 @@ import { sql, desc } from 'drizzle-orm';
 import { GoogleGenAI } from '@google/genai';
 import { VECTOR_DIM, MIN_VECTOR_SIMILARITY, MAX_CONTEXT_CHUNKS } from './constants.ts';
 
-const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-2.0-flash';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-3.5-flash';
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'gemini-embedding-2-preview';
 
 const rerankCache = new Map<string, { results: any[], expires: number }>();

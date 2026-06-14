@@ -26,18 +26,20 @@ export const requireAuth = async (
     req.user = decodedToken;
     
     // Auto-create user in DB
-    const [dbUser] = await db.insert(users)
-      .values({
+    let [dbUser] = await db.select().from(users).where(eq(users.uid, decodedToken.uid));
+    
+    if (!dbUser) {
+      const inserted = await db.insert(users).values({
         uid: decodedToken.uid,
         email: decodedToken.email || '',
-      })
-      .onConflictDoUpdate({
-        target: users.uid,
-        set: {
-          email: decodedToken.email || '',
-        },
-      })
-      .returning();
+      }).returning();
+      dbUser = inserted[0];
+    } else if (dbUser.email !== (decodedToken.email || '')) {
+      const updated = await db.update(users).set({
+        email: decodedToken.email || '',
+      }).where(eq(users.uid, decodedToken.uid)).returning();
+      dbUser = updated[0];
+    }
       
     req.dbUser = dbUser;
     
@@ -47,3 +49,4 @@ export const requireAuth = async (
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
 };
+

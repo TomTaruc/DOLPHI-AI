@@ -5,7 +5,7 @@ import { createServer as createViteServer } from "vite";
 import multer from "multer";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
-import { db } from "./src/db/index.ts";
+import { db, initDb } from "./src/db/index.ts";
 import { conversations, messages, attachments, retrievalLogs, queryCache, suggestedPrompts, conversationSummaries } from "./src/db/schema.ts";
 import { eq, desc, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
@@ -16,7 +16,7 @@ import fetch from "node-fetch";
 import { GoogleGenAI } from "@google/genai";
 import { MAX_HISTORY_MESSAGES } from "./src/lib/constants.ts";
 
-const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-2.0-flash';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-3.5-flash';
 
 function getGenAI() {
   return new GoogleGenAI({ 
@@ -67,6 +67,22 @@ const upload = multer({
 });
 
 async function startServer() {
+  process.on('uncaughtException', err => {
+    fs.writeFileSync('server-crash.log', 'Uncaught: ' + err.stack);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', err => {
+    fs.writeFileSync('server-crash.log', 'Unhandled: ' + (err as any).stack);
+    process.exit(1);
+  });
+  
+  try {
+    await initDb();
+  } catch(e) {
+    fs.writeFileSync('server-crash.log', 'initDb failed: ' + e.stack);
+    process.exit(1);
+  }
+
   const app = express();
   const PORT = 3000;
 
@@ -221,65 +237,67 @@ async function startServer() {
   });
 
   app.post("/api/chat/stream", requireAuth, async (req: AuthRequest, res) => {
-    const { message, conversation_id, attachment_ids, history } = req.body;
-    let convId = conversation_id;
+    try {
+      const { message, conversation_id, attachment_ids, history } = req.body;
+      let convId = conversation_id;
 
-    if (!convId) {
-      const [conv] = await db.insert(conversations).values({
-        userId: req.dbUser!.id,
-        title: message.slice(0, 40)
-      }).returning();
-      convId = conv.id;
-      
-      // Update attachments that were uploaded before the conv existed
-      if (attachment_ids?.length) {
-         for (const aid of attachment_ids) {
-            await db.execute(sql`UPDATE attachments SET conversation_id = ${convId} WHERE id = ${aid}`);
-         }
+      if (!convId) {
+        const [conv] = await db.insert(conversations).values({
+          userId: req.dbUser!.id,
+          title: message.slice(0, 40)
+        }).returning();
+        convId = conv.id;
+        
+        // Update attachments that were uploaded before the conv existed
+        if (attachment_ids?.length) {
+           for (const aid of attachment_ids) {
+              await db.execute(sql`UPDATE attachments SET conversation_id = ${convId} WHERE id = ${aid}`);
+           }
+        }
+
+        const localConvId = convId;
+
+        // Generate a better title async
+        (async () => {
+          try {
+            const ai = getGenAI();
+            const response = await ai.models.generateContent({
+              model: CHAT_MODEL,
+              contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
+            });
+            const title = response.text?.trim();
+            if (title) {
+              await db.update(conversations).set({ title }).where(eq(conversations.id, localConvId));
+            }
+          } catch (e: any) {
+             console.warn("Auto-title failed:", e?.message || "Unknown error");
+          }
+        })();
       }
 
-      const localConvId = convId;
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+      });
 
-      // Generate a better title async
-      (async () => {
-        try {
-          const ai = getGenAI();
-          const response = await ai.models.generateContent({
-            model: CHAT_MODEL,
-            contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
-          });
-          const title = response.text?.trim();
-          if (title) {
-            await db.update(conversations).set({ title }).where(eq(conversations.id, localConvId));
-          }
-        } catch (e: any) {
-           console.warn("Auto-title failed:", e?.message || "Unknown error");
-        }
-      })();
-    }
+      if (!conversation_id) {
+         res.write(`data: ${JSON.stringify({ type: 'conversation_id', id: convId })}\n\n`);
+         (res as any).flush?.();
+      }
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-
-    if (!conversation_id) {
-       res.write(`data: ${JSON.stringify({ type: 'conversation_id', id: convId })}\n\n`);
-       (res as any).flush?.();
-    }
-
-    const startTime = Date.now();
-    let finalAnswer = "";
-    let chunksUsed: any[] = [];
-    let contextChunksText = "";
-    let confidence = 0.9;
-    let rewritten = message;
-    
-    try {
-      const intent = await detectIntent(message);
-      console.log(`[STREAM] convId=${convId || 'new'} | intent=${intent} | msg_len=${message.length}`);
+      const startTime = Date.now();
+      let finalAnswer = "";
+      let chunksUsed: any[] = [];
+      let contextChunksText = "";
+      let confidence = 0.9;
+      let rewritten = message;
+      
+      console.log(`[TRACE] [STEP 1] User message received. Conv=${convId}`);
+      try {
+        const intent = await detectIntent(message);
+      console.log(`[TRACE] [STEP 2] detectIntent done, intent=${intent}`);
       
       const [userMsg] = await db.insert(messages).values({
         conversationId: convId,
@@ -315,6 +333,7 @@ async function startServer() {
       } else {
          const hasAttachments = attachment_ids && attachment_ids.length > 0;
 
+         console.log(`[TRACE] [STEP 3] Search/Retrieval started.`);
          if (!hasAttachments && ['knowledge_search', 'general_question'].includes(intent)) {
             rewritten = await rewriteQuery(message, history);
             const searchResult = await searchKnowledge(rewritten);
@@ -327,6 +346,7 @@ async function startServer() {
             }
             contextChunksText = chunksUsed.map((c: any) => c.content).join('\n\n');
          }
+         console.log(`[TRACE] [STEP 4] Search/Retrieval completed.`);
 
          let systemPrompt = `You are DOLPHI AI, a helpful, intelligent assistant.`;
 
@@ -415,13 +435,12 @@ async function startServer() {
          }
 
          const ai = getGenAI();
-         console.log(`[STREAM] Calling ${CHAT_MODEL} with ${sanitizedContents.length} contents entries.`);
+         console.log(`[TRACE] [STEP 5] Calling ${CHAT_MODEL} with ${sanitizedContents.length} contents entries.`);
          
          const ac = new AbortController();
          const timeoutId = setTimeout(() => ac.abort(new Error("TIMEOUT")), 25000);
          
          try {
-             // using race to simulate hard timeout since we can't be sure it supports signals yet
              const responseStream = await Promise.race([
                  withRetry<any>(() => ai.models.generateContentStream({
                      model: CHAT_MODEL,
@@ -433,7 +452,13 @@ async function startServer() {
                  })
              ]);
     
+             console.log("[TRACE] [STEP 6] Stream opened");
+             let gotFirst = false;
              for await (const chunk of responseStream) {
+                if (!gotFirst) {
+                    console.log("[TRACE] [STEP 7] First token received");
+                    gotFirst = true;
+                }
                 const text = (chunk as any).text || "";
                 if (text) {
                    finalAnswer += text;
@@ -442,7 +467,7 @@ async function startServer() {
                 }
              }
              clearTimeout(timeoutId);
-             console.log(`[STREAM] Success for conv=${convId}`);
+             console.log(`[TRACE] [STEP 8] Response completed for conv=${convId}`);
          } catch(e: any) {
              clearTimeout(timeoutId);
              console.warn(`[STREAM] API Call failed or timed out:`, e?.message || e);
@@ -536,7 +561,15 @@ async function startServer() {
     }
     
     res.end();
-  });
+  } catch (outerError: any) {
+    console.error("Top level stream error:", outerError);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to generate reply" });
+    } else {
+      res.end();
+    }
+  }
+});
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

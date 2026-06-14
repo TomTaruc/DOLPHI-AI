@@ -188,6 +188,10 @@ export default function App() {
         signal: abortControllerRef.current.signal
       });
 
+      if (!res.ok) {
+        throw new Error(`Server returned status: ${res.status}`);
+      }
+
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
