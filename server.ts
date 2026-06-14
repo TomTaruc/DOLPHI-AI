@@ -28,7 +28,17 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
   try {
     return await fn();
   } catch (error: any) {
-    if (retries === 0 || error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429')) throw error;
+    console.warn(`[API Attempt Failed] - Error: ${error?.message || error?.status || 'Unknown'}`);
+    const isRateLimit = error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429');
+    
+    if (retries === 0) throw error;
+    
+    // For non-429 errors, retry only once and very quickly
+    if (!isRateLimit && retries > 1) {
+       retries = 1;
+       delay = 500;
+    }
+    
     await new Promise(r => setTimeout(r, delay));
     return withRetry(fn, retries - 1, delay * 2);
   }
@@ -263,6 +273,7 @@ async function startServer() {
     
     try {
       const intent = await detectIntent(message);
+      console.log(`[STREAM] convId=${convId || 'new'} | intent=${intent} | msg_len=${message.length}`);
       
       const [userMsg] = await db.insert(messages).values({
         conversationId: convId,
@@ -278,6 +289,8 @@ async function startServer() {
 
       // Check cache
       const cached = await checkSemanticCache(message, intent, attachment_ids);
+      console.log(`[STREAM] Cache check done | hit=${!!cached}`);
+      
       if (cached) {
          finalAnswer = cached;
          res.write(`data: ${JSON.stringify({ type: 'token', content: finalAnswer })}\n\n`);
@@ -306,6 +319,7 @@ async function startServer() {
             .limit(1);
 
          if (latestSummary && latestSummary.summary) {
+             contents.push({ role: "user", parts: [{ text: "Here is context from earlier in our conversation." }] });
              contents.push({ role: "model", parts: [{ text: "PREVIOUS CONVERSATION SUMMARY:\n" + latestSummary.summary }] });
          }
 
@@ -361,21 +375,38 @@ async function startServer() {
          contents.push({ role: "user", parts: parts });
 
          const ai = getGenAI();
-         const responseStream = await withRetry<any>(() => ai.models.generateContentStream({
-             model: CHAT_MODEL,
-             contents: contents,
-             config: {
-               systemInstruction: systemPrompt
+         console.log(`[STREAM] Calling ${CHAT_MODEL} with ${contents.length} contents entries.`);
+         
+         const ac = new AbortController();
+         const timeoutId = setTimeout(() => ac.abort(new Error("TIMEOUT")), 25000);
+         
+         try {
+             // using race to simulate hard timeout since we can't be sure it supports signals yet
+             const responseStream = await Promise.race([
+                 withRetry<any>(() => ai.models.generateContentStream({
+                     model: CHAT_MODEL,
+                     contents: contents,
+                     config: { systemInstruction: systemPrompt }
+                 })),
+                 new Promise<any>((_, reject) => {
+                     ac.signal.addEventListener('abort', () => reject(ac.signal.reason));
+                 })
+             ]);
+    
+             for await (const chunk of responseStream) {
+                const text = (chunk as any).text || "";
+                if (text) {
+                   finalAnswer += text;
+                   res.write(`data: ${JSON.stringify({ type: 'token', content: text })}\n\n`);
+                   (res as any).flush?.();
+                }
              }
-         }));
-
-         for await (const chunk of responseStream) {
-            const text = (chunk as any).text || "";
-            if (text) {
-               finalAnswer += text;
-               res.write(`data: ${JSON.stringify({ type: 'token', content: text })}\n\n`);
-               (res as any).flush?.();
-            }
+             clearTimeout(timeoutId);
+             console.log(`[STREAM] Success for conv=${convId}`);
+         } catch(e: any) {
+             clearTimeout(timeoutId);
+             console.warn(`[STREAM] API Call failed or timed out:`, e?.message || e);
+             throw e; // goes to outer catch
          }
 
          res.write(`data: ${JSON.stringify({ type: 'meta', confidence, sources: chunksUsed.slice(0, 3).map((c: any) => c.sourceFile) })}\n\n`);

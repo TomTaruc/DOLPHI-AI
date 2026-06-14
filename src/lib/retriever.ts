@@ -73,24 +73,32 @@ async function bm25Retriever(query: string, limit: number) {
 }
 
 export async function searchKnowledge(query: string, limit: number = MAX_CONTEXT_CHUNKS) {
+  let candidates: any[] = [];
+  
   try {
     // 1. Vector Search
     const queryEmbedding = await embedText(query);
     
-    // Explicitly cast the query embedding to vector(VECTOR_DIM) to match the schema
-    const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${VECTOR_DIM}))`;
-    
-    let candidates = await db.select({
-      id: knowledgeChunks.id,
-      sourceFile: knowledgeChunks.sourceFile,
-      content: knowledgeChunks.content,
-      similarity
-    })
-    .from(knowledgeChunks)
-    .where(sql`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${VECTOR_DIM})) > ${MIN_VECTOR_SIMILARITY}`)
-    .orderBy(desc(similarity))
-    .limit(12);
+    if (queryEmbedding && queryEmbedding.length > 0) {
+      const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${VECTOR_DIM}))`;
+      
+      candidates = await db.select({
+        id: knowledgeChunks.id,
+        sourceFile: knowledgeChunks.sourceFile,
+        content: knowledgeChunks.content,
+        similarity
+      })
+      .from(knowledgeChunks)
+      .where(sql`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${VECTOR_DIM})) > ${MIN_VECTOR_SIMILARITY}`)
+      .orderBy(desc(similarity))
+      .limit(12);
+    }
+  } catch (error: any) {
+    console.warn('Vector search failed (pgvector missing or error), falling back to BM25:', error?.message);
+    // candidates remain empty, automatically triggering BM25 hybrid logic below
+  }
 
+  try {
     // 2. Fallback to BM25 if very few results or we want hybrid
     if (candidates.length < 2) {
        const bm25Results = await bm25Retriever(query, 12);

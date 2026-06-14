@@ -124,6 +124,7 @@ export default function App() {
     // 1. Optimistic UI first
     const tempId = Math.random().toString();
     const streamingMsgId = crypto.randomUUID();
+    let finalConvId = currentConvId;
     
     const newMsg = {
       id: tempId,
@@ -142,28 +143,28 @@ export default function App() {
     setMessages(prev => [...prev, newMsg, { id: streamingMsgId, role: 'assistant', content: '', isStreaming: true }]);
     abortControllerRef.current = new AbortController();
 
-    // 2. Upload attachments gracefully
-    let aidList: string[] = [];
-    if (rawAttachments.length > 0) {
-      try {
-        aidList = await uploadAttachments(rawAttachments, currentConvId);
-      } catch (err) {
-        alert("Upload failed. Please try again.");
-        setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== streamingMsgId));
-        return;
-      }
-    }
-    
-    // Revoke object URLs once uploaded
-    rawAttachments.forEach(att => {
-        if (att.preview && att.preview.startsWith('blob:')) {
-            URL.revokeObjectURL(att.preview);
-        }
-    });
-
-    // 3. Initiate the Stream
-    const token = await auth.currentUser!.getIdToken();
     try {
+      // 2. Upload attachments gracefully
+      let aidList: string[] = [];
+      if (rawAttachments.length > 0) {
+        try {
+          aidList = await uploadAttachments(rawAttachments, finalConvId);
+        } catch (err) {
+          alert("Upload failed. Please try again.");
+          setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== streamingMsgId));
+          return;
+        }
+      }
+      
+      // Revoke object URLs once uploaded
+      rawAttachments.forEach(att => {
+          if (att.preview && att.preview.startsWith('blob:')) {
+              URL.revokeObjectURL(att.preview);
+          }
+      });
+
+      // 3. Initiate the Stream
+      const token = await auth.currentUser!.getIdToken();
       const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: {
@@ -172,7 +173,7 @@ export default function App() {
         },
         body: JSON.stringify({
           message: text,
-          conversation_id: currentConvId,
+          conversation_id: finalConvId,
           attachment_ids: aidList,
           history: messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
         }),
@@ -194,6 +195,7 @@ export default function App() {
           const data = JSON.parse(line.slice(6));
           
           if (data.type === 'conversation_id') {
+            finalConvId = data.id;
             setCurrentConvId(data.id);
             loadConversations();
           } else if (data.type === 'token') {
@@ -205,17 +207,19 @@ export default function App() {
             loadConversations();
             
             // Sync final state from DB
-            if (currentConvId) loadMessages(currentConvId);
+            if (finalConvId) loadMessages(finalConvId);
             else if (data.conversation_id) loadMessages(data.conversation_id);
           }
         }
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        console.warn(err);
+        console.warn('Stream failed:', err);
+        setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, content: "Couldn't reach the server — please try again", isStreaming: false } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
       }
       setIsGenerating(false);
-      setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
     } finally {
       abortControllerRef.current = null;
     }
