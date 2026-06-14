@@ -281,6 +281,10 @@ async function startServer() {
         content: message
       }).returning();
 
+      await db.update(conversations)
+        .set({ updatedAt: new Date() })
+        .where(eq(conversations.id, convId));
+
       if (attachment_ids && attachment_ids.length > 0) {
         for (const aid of attachment_ids) {
            await db.execute(sql`UPDATE attachments SET message_id = ${userMsg.id} WHERE id = ${aid}`);
@@ -288,7 +292,7 @@ async function startServer() {
       }
 
       // Check cache
-      const cached = await checkSemanticCache(message, intent, attachment_ids);
+      const cached = await checkSemanticCache(message, intent, attachment_ids, history.length);
       console.log(`[STREAM] Cache check done | hit=${!!cached}`);
       
       if (cached) {
@@ -296,7 +300,9 @@ async function startServer() {
          res.write(`data: ${JSON.stringify({ type: 'token', content: finalAnswer })}\n\n`);
          (res as any).flush?.();
       } else {
-         if (['knowledge_search', 'general_question'].includes(intent)) {
+         const hasAttachments = attachment_ids && attachment_ids.length > 0;
+
+         if (!hasAttachments && ['knowledge_search', 'general_question'].includes(intent)) {
             rewritten = await rewriteQuery(message, history);
             const searchResult = await searchKnowledge(rewritten);
             chunksUsed = searchResult.results;
@@ -309,7 +315,15 @@ async function startServer() {
             contextChunksText = chunksUsed.map((c: any) => c.content).join('\n\n');
          }
 
-         const systemPrompt = `You are DOLPHI AI...\n\nRETRIEVED KNOWLEDGE (confidence: ${confidence}):\n${contextChunksText}\n\nINSTRUCTIONS:\nAnswer based on the retrieved knowledge. Priority Order:\n1. Uploaded Files\n2. Retrieved Knowledge\n3. Conversation Memory\n4. Model Knowledge\nIf retrieval fails or confidence < 0.3, continue answering using general model knowledge, clearly distinguishing it.`;
+         let systemPrompt = `You are DOLPHI AI, a helpful, intelligent assistant.`;
+
+         if (chunksUsed.length > 0) {
+             systemPrompt += `\n\nRETRIEVED KNOWLEDGE (confidence: ${confidence}):\n${contextChunksText}\n\nINSTRUCTIONS: Answer based on the retrieved knowledge if it contains the answer. If the retrieved knowledge is irrelevant or insufficient, explicitly use your general model knowledge to fully answer the user.`;
+         } else if (attachment_ids && attachment_ids.length > 0) {
+             systemPrompt += `\n\nINSTRUCTIONS: You have been provided with uploaded files. Analyze them carefully and directly answer the user's request based on their contents.`;
+         } else {
+             systemPrompt += `\n\nINSTRUCTIONS: Answer the user's query using your general knowledge and the provided conversation history.`;
+         }
 
          const contents: any[] = [];
          
@@ -350,6 +364,8 @@ async function startServer() {
          let parts: any[] = [];
          parts.push({ text: message });
 
+         const textMimes = ['text/plain', 'text/csv', 'text/markdown', 'application/json'];
+
          if (attachment_ids && attachment_ids.length > 0) {
             for (const aid of attachment_ids) {
                const [att] = await db.select().from(attachments).where(eq(attachments.id, aid));
@@ -362,11 +378,13 @@ async function startServer() {
                           data: base64Img
                         }
                      });
-                  } else {
+                  } else if (textMimes.includes(att.mimeType)) {
                      const txtContent = fs.readFileSync(att.storagePath, 'utf8');
                      parts.push({
                         text: `\n\n[Attached File: ${att.originalName}]\n${txtContent.substring(0, 10000)}`
                      });
+                  } else {
+                     parts.push({ text: `\n\n[Attached File: ${att.originalName}]\n(System Note: The contents of this file format (${att.mimeType || 'unknown'}) cannot be directly read as text. Inform the user they must provide a PDF, TXT, or CSV file for deep analysis.)` });
                   }
                }
             }
@@ -374,8 +392,17 @@ async function startServer() {
 
          contents.push({ role: "user", parts: parts });
 
+         const sanitizedContents: any[] = [];
+         for (const c of contents) {
+            if (sanitizedContents.length > 0 && sanitizedContents[sanitizedContents.length - 1].role === c.role) {
+                sanitizedContents[sanitizedContents.length - 1].parts.push(...c.parts);
+            } else {
+                sanitizedContents.push(c);
+            }
+         }
+
          const ai = getGenAI();
-         console.log(`[STREAM] Calling ${CHAT_MODEL} with ${contents.length} contents entries.`);
+         console.log(`[STREAM] Calling ${CHAT_MODEL} with ${sanitizedContents.length} contents entries.`);
          
          const ac = new AbortController();
          const timeoutId = setTimeout(() => ac.abort(new Error("TIMEOUT")), 25000);
@@ -385,7 +412,7 @@ async function startServer() {
              const responseStream = await Promise.race([
                  withRetry<any>(() => ai.models.generateContentStream({
                      model: CHAT_MODEL,
-                     contents: contents,
+                     contents: sanitizedContents,
                      config: { systemInstruction: systemPrompt }
                  })),
                  new Promise<any>((_, reject) => {

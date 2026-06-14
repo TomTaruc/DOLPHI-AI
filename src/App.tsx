@@ -183,32 +183,40 @@ export default function App() {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
+      let buffer = '';
       setIsGenerating(true);
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         
-        const lines = decoder.decode(value).split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          const data = JSON.parse(line.slice(6));
-          
-          if (data.type === 'conversation_id') {
-            finalConvId = data.id;
-            setCurrentConvId(data.id);
-            loadConversations();
-          } else if (data.type === 'token') {
-            assistantContent += data.content;
-            setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, content: assistantContent, isStreaming: true } : m));
-          } else if (data.type === 'done') {
-            setIsGenerating(false);
-            setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
-            loadConversations();
+          try {
+            const data = JSON.parse(line.slice(6));
             
-            // Sync final state from DB
-            if (finalConvId) loadMessages(finalConvId);
-            else if (data.conversation_id) loadMessages(data.conversation_id);
+            if (data.type === 'conversation_id') {
+              finalConvId = data.id;
+              setCurrentConvId(data.id);
+              loadConversations();
+            } else if (data.type === 'token') {
+              assistantContent += data.content;
+              setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, content: assistantContent, isStreaming: true } : m));
+            } else if (data.type === 'done') {
+              setIsGenerating(false);
+              setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
+              loadConversations();
+              
+              // Sync final state from DB
+              if (finalConvId) loadMessages(finalConvId);
+              else if (data.conversation_id) loadMessages(data.conversation_id);
+            }
+          } catch (parseError) {
+             console.warn("Incomplete JSON chunk skipped, waiting for remainder.");
           }
         }
       }

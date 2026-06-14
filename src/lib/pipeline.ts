@@ -89,8 +89,9 @@ export async function detectIntent(userMessage: string): Promise<string> {
     }
 }
 
-export async function checkSemanticCache(query: string, intent: string, attachmentIds?: string[]) {
+export async function checkSemanticCache(query: string, intent: string, attachmentIds?: string[], historyLength: number = 0) {
     if (attachmentIds && attachmentIds.length > 0) return null;
+    if (historyLength > 0) return null; // Context isolation: Only cache zero-shot queries
     if (intent !== 'knowledge_search') return null;
     if (pgVectorFailed) return null;
 

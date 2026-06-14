@@ -114,56 +114,8 @@ export async function searchKnowledge(query: string, limit: number = MAX_CONTEXT
     
     if (candidates.length === 0) return { results: [], error: false };
 
-    // 3. Rerank
-    const cacheKey = query;
-    if (rerankCache.has(cacheKey) && rerankCache.get(cacheKey)!.expires > Date.now()) {
-        return { results: rerankCache.get(cacheKey)!.results, error: false };
-    }
-
-    const ai = getGenAI();
-    candidates = candidates.slice(0, 12); // take top 12 at most
-    const passagesPayload = candidates.map(c => `[ID: ${c.id}] ${c.content.substring(0, 500)}`).join('\n\n');
-    
-    try {
-        const rerankPrompt = `Given query: "${query}"\nScore each passage 0-10 for relevance. Return JSON array of {id, score}.\nPassages:\n${passagesPayload}`;
-        const response = await withRetry(() => ai.models.generateContent({
-           model: CHAT_MODEL,
-           contents: rerankPrompt,
-           config: { responseMimeType: "application/json" }
-        }));
-        
-        try {
-           const scores: {id: string, score: number}[] = JSON.parse(response.text || "[]");
-           const scoreMap = new Map<string, number>();
-           for (const s of scores) scoreMap.set(s.id, s.score);
-           
-           candidates.sort((a, b) => {
-               const sA = scoreMap.get(a.id) ?? 0;
-               const sB = scoreMap.get(b.id) ?? 0;
-               return sB - sA;
-           });
-           
-           // Apply rerank score as similarity if available, else keep generic sort
-           candidates = candidates.map(c => ({
-              ...c,
-              similarity: scoreMap.has(c.id) ? scoreMap.get(c.id)! / 10 : c.similarity
-           }));
-           
-        } catch(e) {}
-    } catch(e: any) {
-        console.warn("Reranking failed:", e?.message);
-    }
-
+    candidates.sort((a, b) => b.similarity - a.similarity);
     candidates = candidates.slice(0, limit);
-    
-    rerankCache.set(cacheKey, { results: candidates, expires: Date.now() + 5 * 60 * 1000 });
-    
-    // Auto-clean rerank cache
-    if (rerankCache.size > 200) {
-       for (const [k, v] of rerankCache.entries()) {
-           if (v.expires < Date.now()) rerankCache.delete(k);
-       }
-    }
 
     return { results: candidates, error: false };
   } catch (error: any) {
