@@ -12,6 +12,7 @@
     "start": "node dist/server.cjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
     "@electric-sql/pglite": "^0.5.2",
     "@electric-sql/pglite-pgvector": "^0.0.3",
     "@google/genai": "^2.8.0",
@@ -30,6 +31,7 @@
     "marked": "^18.0.5",
     "motion": "^12.23.24",
     "multer": "^2.1.1",
+    "openai": "^6.42.0",
     "pdf-parse": "^2.4.5",
     "pg": "^8.21.0",
     "pgvector": "^0.3.0",

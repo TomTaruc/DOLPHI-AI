@@ -13,23 +13,16 @@ import { indexKnowledgeBase } from "./src/lib/indexer.ts";
 import { rewriteQuery, detectIntent, checkSemanticCache, verifyAnswer } from "./src/lib/pipeline.ts";
 import { searchKnowledge, embedText } from "./src/lib/retriever.ts";
 import fetch from "node-fetch";
-import { GoogleGenAI } from "@google/genai";
+import { AIService } from "./src/lib/provider.ts";
 import { MAX_HISTORY_MESSAGES } from "./src/lib/constants.ts";
 
 const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-3.5-flash';
-
-function getGenAI() {
-  return new GoogleGenAI({ 
-    apiKey: process.env.GEMINI_API_KEY || 'dummy',
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-  });
-}
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
-    console.warn(`[API Attempt Failed] - Error: ${error?.message || error?.status || 'Unknown'}`);
+    console.info(`[API Attempt Failed] - Error: ${error?.message || error?.status || 'Unknown'}`);
     const isRateLimit = error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429');
     
     if (retries === 0) throw error;
@@ -40,8 +33,19 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
        delay = 500;
     }
     
+    if (isRateLimit && error?.message) {
+       const match = error.message.match(/retry in (\d+\.?\d*)s/i);
+       if (match && match[1]) {
+           const parsedDelay = parseFloat(match[1]) * 1000;
+           if (!isNaN(parsedDelay) && parsedDelay > delay) {
+               delay = parsedDelay + 500; // Add 500ms jitter/buffer
+               console.info(`[RETRY] Parsed delay from error message: waiting ${delay}ms`);
+           }
+       }
+    }
+    
     await new Promise(r => setTimeout(r, delay));
-    return withRetry(fn, retries - 1, delay * 2);
+    return withRetry(fn, retries - 1, isRateLimit ? delay * 1.5 : delay * 2);
   }
 }
 
@@ -94,7 +98,7 @@ async function startServer() {
   app.use(express.json());
 
   // Wait for indexing
-  indexKnowledgeBase().catch(e => console.error("Indexing failed:", e));
+  indexKnowledgeBase().catch(e => console.info("Indexing failed:", e));
 
   // Cleanup orphaned attachments older than 1 day
   setInterval(async () => {
@@ -260,8 +264,7 @@ async function startServer() {
         // Generate a better title async
         (async () => {
           try {
-            const ai = getGenAI();
-            const response = await ai.models.generateContent({
+            const response = await AIService.generateContent({
               model: CHAT_MODEL,
               contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
             });
@@ -270,7 +273,7 @@ async function startServer() {
               await db.update(conversations).set({ title }).where(eq(conversations.id, localConvId));
             }
           } catch (e: any) {
-             console.warn("Auto-title failed:", e?.message || "Unknown error");
+             console.info("Auto-title failed:", e?.message || "Unknown error");
           }
         })();
       }
@@ -434,15 +437,14 @@ async function startServer() {
             }
          }
 
-         const ai = getGenAI();
          console.log(`[TRACE] [STEP 5] Calling ${CHAT_MODEL} with ${sanitizedContents.length} contents entries.`);
          
          const ac = new AbortController();
-         const timeoutId = setTimeout(() => ac.abort(new Error("TIMEOUT")), 25000);
+         const timeoutId = setTimeout(() => ac.abort(new Error("TIMEOUT")), 300000); // 300s
          
          try {
              const responseStream = await Promise.race([
-                 withRetry<any>(() => ai.models.generateContentStream({
+                 withRetry<any>(() => AIService.generateContentStream({
                      model: CHAT_MODEL,
                      contents: sanitizedContents,
                      config: { systemInstruction: systemPrompt }
@@ -470,7 +472,7 @@ async function startServer() {
              console.log(`[TRACE] [STEP 8] Response completed for conv=${convId}`);
          } catch(e: any) {
              clearTimeout(timeoutId);
-             console.warn(`[STREAM] API Call failed or timed out:`, e?.message || e);
+             console.info(`[STREAM] API Call failed or timed out:`, e?.message || e);
              throw e; // goes to outer catch
          }
 
@@ -523,9 +525,8 @@ async function startServer() {
                      .orderBy(messages.createdAt)
                      .limit(msgCount - 8);
                      
-                 const ai = getGenAI();
                  const oldText = oldHistoryRows.map((m: any) => `${m.role}: ${m.content}`).join('\n');
-                 const response = await ai.models.generateContent({
+                 const response = await AIService.generateContent({
                      model: CHAT_MODEL,
                      contents: `Summarize the key information, context, and user constraints from this older conversation history. Keep it concise but factual.\n\n${oldText}`
                  });
@@ -537,17 +538,17 @@ async function startServer() {
                      });
                  }
              }
-         } catch(e) { console.warn("Summary failed", e); }
+         } catch(e) { console.info("Summary failed", e); }
       })();
 
       res.write(`data: ${JSON.stringify({ type: 'done', message_id: asstMsg.id })}\n\n`);
       (res as any).flush?.();
     } catch (error: any) {
-      console.warn("Chat stream error:", error.message || error);
+      console.info("Chat stream error:", error.message || error);
       if (!finalAnswer) {
-          finalAnswer = "[Connection lost, or API rate limit exceeded. Please try again.]";
+          finalAnswer = "I'm having trouble thinking right now. Please try your request again.";
       }
-      res.write(`data: ${JSON.stringify({ type: 'token', content: "\\n\\n[Connection lost, or API rate limit exceeded. Please try again.]" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'token', content: "\\n\\nI'm having trouble thinking right now. Please try your request again." })}\n\n`);
       (res as any).flush?.();
       
       const [asstMsg] = await db.insert(messages).values({
@@ -562,7 +563,7 @@ async function startServer() {
     
     res.end();
   } catch (outerError: any) {
-    console.error("Top level stream error:", outerError);
+    console.info("Top level stream error:", outerError);
     if (!res.headersSent) {
       res.status(500).json({ error: "Failed to generate reply" });
     } else {

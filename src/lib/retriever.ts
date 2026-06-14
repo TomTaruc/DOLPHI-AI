@@ -20,9 +20,26 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
   try {
     return await fn();
   } catch (error: any) {
-    if (retries === 0 || error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429')) throw error;
+    const isRateLimit = error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429');
+    if (retries === 0) throw error;
+    
+    if (!isRateLimit && retries > 1) {
+       retries = 1;
+       delay = 500;
+    }
+    
+    if (isRateLimit && error?.message) {
+       const match = error.message.match(/retry in (\d+\.?\d*)s/i);
+       if (match && match[1]) {
+           const parsedDelay = parseFloat(match[1]) * 1000;
+           if (!isNaN(parsedDelay) && parsedDelay > delay) {
+               delay = parsedDelay + 500;
+           }
+       }
+    }
+    
     await new Promise(r => setTimeout(r, delay));
-    return withRetry(fn, retries - 1, delay * 2);
+    return withRetry(fn, retries - 1, isRateLimit ? delay * 1.5 : delay * 2);
   }
 }
 
@@ -36,7 +53,7 @@ export async function embedText(text: string): Promise<number[]> {
     }));
     return response.embeddings?.[0]?.values || [];
   } catch (error: any) {
-    console.error("Embedding failed:", error?.message || error);
+    console.info("Embedding failed:", error?.message || error);
     throw error;
   }
 }
@@ -51,7 +68,7 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
     }));
     return response.embeddings?.map(e => e.values || []) || [];
   } catch (error: any) {
-    console.error("Batch embedding failed:", error?.message || error);
+    console.info("Batch embedding failed:", error?.message || error);
     throw error;
   }
 }
@@ -80,7 +97,7 @@ export async function searchKnowledge(query: string, limit: number = MAX_CONTEXT
     const queryEmbedding = await embedText(query);
     
     if (queryEmbedding && queryEmbedding.length > 0) {
-      const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${VECTOR_DIM}))`;
+      const similarity = sql<number>`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${sql.raw(String(VECTOR_DIM))}))`;
       
       candidates = await db.select({
         id: knowledgeChunks.id,
@@ -89,12 +106,12 @@ export async function searchKnowledge(query: string, limit: number = MAX_CONTEXT
         similarity
       })
       .from(knowledgeChunks)
-      .where(sql`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${VECTOR_DIM})) > ${MIN_VECTOR_SIMILARITY}`)
+      .where(sql`1 - (${knowledgeChunks.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector(${sql.raw(String(VECTOR_DIM))})) > ${MIN_VECTOR_SIMILARITY}`)
       .orderBy(desc(similarity))
       .limit(12);
     }
   } catch (error: any) {
-    console.warn('Vector search failed (pgvector missing or error), falling back to BM25:', error?.message);
+    console.info('Vector search failed (pgvector missing or error), falling back to BM25:', error?.message);
     // candidates remain empty, automatically triggering BM25 hybrid logic below
   }
 
@@ -119,7 +136,7 @@ export async function searchKnowledge(query: string, limit: number = MAX_CONTEXT
 
     return { results: candidates, error: false };
   } catch (error: any) {
-    console.error('Error searching knowledge:', error?.message || error);
+    console.info('Error searching knowledge:', error?.message || error);
     return { results: [], error: true };
   }
 }

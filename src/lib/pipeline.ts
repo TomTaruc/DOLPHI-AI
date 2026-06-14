@@ -2,25 +2,35 @@ import { db } from '../db/index.ts';
 import { queryCache, retrievalLogs } from '../db/schema.ts';
 import { embedText, searchKnowledge } from './retriever.ts';
 import { eq, sql } from 'drizzle-orm';
-import { GoogleGenAI } from '@google/genai';
+import { AIService } from './provider.ts';
 import { VECTOR_DIM, SEMANTIC_CACHE_THRESHOLD } from './constants.ts';
 
 const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-3.5-flash';
-
-function getGenAI() {
-  return new GoogleGenAI({ 
-    apiKey: process.env.GEMINI_API_KEY || 'dummy_key',
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-  });
-}
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
-    if (retries === 0 || error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429')) throw error;
+    const isRateLimit = error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || error?.message?.includes('429');
+    if (retries === 0) throw error;
+    
+    if (!isRateLimit && retries > 1) {
+       retries = 1;
+       delay = 500;
+    }
+    
+    if (isRateLimit && error?.message) {
+       const match = error.message.match(/retry in (\d+\.?\d*)s/i);
+       if (match && match[1]) {
+           const parsedDelay = parseFloat(match[1]) * 1000;
+           if (!isNaN(parsedDelay) && parsedDelay > delay) {
+               delay = parsedDelay + 500;
+           }
+       }
+    }
+    
     await new Promise(r => setTimeout(r, delay));
-    return withRetry(fn, retries - 1, delay * 2);
+    return withRetry(fn, retries - 1, isRateLimit ? delay * 1.5 : delay * 2);
   }
 }
 
@@ -30,7 +40,6 @@ const rewriteCache = new Map<string, string>();
 let pgVectorFailed = false;
 
 export async function rewriteQuery(userMessage: string, history: any[]): Promise<string> {
-    const ai = getGenAI();
     const cacheKey = userMessage + "|" + (history.length ? history[history.length-1]?.content : "");
     if (rewriteCache.has(cacheKey)) {
         return rewriteCache.get(cacheKey)!;
@@ -38,7 +47,7 @@ export async function rewriteQuery(userMessage: string, history: any[]): Promise
 
     try {
         const prompt = `You are a search query optimizer. Given a conversational message and conversation context, rewrite the message as a single standalone search query that captures the full intent without pronouns or references. Output only the rewritten query, nothing else.\n\nContext: ${JSON.stringify(history.slice(-4))}\n\nUser Message: ${userMessage}`;
-        const response = await withRetry(() => ai.models.generateContent({
+        const response = await withRetry(() => AIService.generateContent({
             model: CHAT_MODEL,
             contents: prompt,
             config: { maxOutputTokens: 60 }
@@ -54,7 +63,7 @@ export async function rewriteQuery(userMessage: string, history: any[]): Promise
         
         return rewritten;
     } catch(e: any) {
-        console.warn("Query rewrite failed", e.message);
+        console.info("Query rewrite failed", e.message);
         return userMessage;
     }
 }
@@ -76,15 +85,14 @@ export async function detectIntent(userMessage: string): Promise<string> {
             return 'general_question'; // default without LLM call for short phrases
         }
 
-        const ai = getGenAI();
         const prompt = `Classify intent into exactly one of: greeting, small_talk, knowledge_search, document_analysis, image_analysis, follow_up, comparison, summarization, general_question.\nUser Message: ${userMessage}\nReturn ONLY the intent string.`;
-        const response = await withRetry(() => ai.models.generateContent({
+        const response = await withRetry(() => AIService.generateContent({
             model: CHAT_MODEL,
             contents: prompt
         }));
         return response.text?.trim() || 'knowledge_search';
     } catch(e: any) {
-        console.warn("Intent detection failed", e.message);
+        console.info("Intent detection failed", e.message);
         return 'knowledge_search';
     }
 }
@@ -101,7 +109,7 @@ export async function checkSemanticCache(query: string, intent: string, attachme
         if (numRows === 0) return null; // Avoid issue 23
 
         const embedding = await embedText(query);
-        const similarity = sql<number>`1 - (${queryCache.queryEmbedding} <=> ${JSON.stringify(embedding)}::vector(${VECTOR_DIM}))`;
+        const similarity = sql<number>`1 - (${queryCache.queryEmbedding} <=> ${JSON.stringify(embedding)}::vector(${sql.raw(String(VECTOR_DIM))}))`;
         const results = await db.select({
             id: queryCache.id,
             answer: queryCache.answer,
@@ -117,9 +125,9 @@ export async function checkSemanticCache(query: string, intent: string, attachme
             return results[0].answer;
         }
     } catch(e: any) {
-        console.warn("Semantic cache check failed:", e.message);
+        console.info("Semantic cache check failed:", e.message);
         if (e.message?.includes('operator does not exist') || e.message?.includes('function not found') || e.message?.includes('type "vector" does not exist')) {
-            console.warn("pgvector extension not installed. Disabling semantic cache.");
+            console.info("pgvector extension not installed. Disabling semantic cache.");
             pgVectorFailed = true;
         }
     }
@@ -127,10 +135,9 @@ export async function checkSemanticCache(query: string, intent: string, attachme
 }
 
 export async function verifyAnswer(query: string, chunks: any[], draft: string): Promise<{supported: boolean, confidence: number}> {
-    const ai = getGenAI();
     try {
         const prompt = `Verify this answer against the chunks.\nQuery: ${query}\nChunks: ${JSON.stringify(chunks)}\nDraft: ${draft}\n\nRespond with JSON: { "supported": true/false, "confidence": 0-1, "unsupported_claims": [] }`;
-        const response = await withRetry(() => ai.models.generateContent({
+        const response = await withRetry(() => AIService.generateContent({
             model: CHAT_MODEL,
             contents: prompt,
             config: { responseMimeType: 'application/json' }
@@ -142,7 +149,7 @@ export async function verifyAnswer(query: string, chunks: any[], draft: string):
             return { supported: true, confidence: 0.8 };
         }
     } catch(e: any) {
-        console.warn("Answer verification failed", e.message);
+        console.info("Answer verification failed", e.message);
         return { supported: true, confidence: 0.8 };
     }
 }

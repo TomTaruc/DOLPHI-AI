@@ -5,20 +5,16 @@ import { Sidebar } from './components/Sidebar';
 import { MessageBubble } from './components/MessageBubble';
 import { InputBar } from './components/InputBar';
 import { AuthScreen } from './components/AuthScreen';
+import { StreamingMessage } from './components/StreamingMessage';
+import { useChatStreaming } from './hooks/useChatStreaming';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   
   const [conversations, setConversations] = useState<any[]>([]);
-  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [suggestedPrompts, setSuggestedPrompts] = useState<any[]>([]);
-
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, u => {
@@ -32,23 +28,13 @@ export default function App() {
     if (user) {
       loadConversations();
       loadSuggestedPrompts();
+      
+      const lastConvId = localStorage.getItem('lastOpenedConvId');
+      if (lastConvId) {
+         setCurrentConvId(lastConvId);
+      }
     }
   }, [user]);
-
-  const loadSuggestedPrompts = async () => {
-    const res = await apiFetch('/api/suggested-prompts');
-    if (res?.ok) {
-      setSuggestedPrompts(await res.json());
-    }
-  };
-
-  useEffect(() => {
-    if (currentConvId && !isGenerating) {
-      loadMessages(currentConvId);
-    } else if (!currentConvId) {
-      setMessages([]);
-    }
-  }, [currentConvId]);
 
   const apiFetch = async (url: string, options: any = {}) => {
     if (!auth.currentUser) return { ok: false, json: async () => ({}) };
@@ -63,47 +49,12 @@ export default function App() {
       });
       return response;
     } catch (err) {
-      console.warn("Network error during apiFetch (server might be restarting):", err);
+      console.warn("Network error during apiFetch:", err);
       return { ok: false, json: async () => ({}) };
     }
   };
 
-  const loadConversations = async () => {
-    const res = await apiFetch('/api/conversations');
-    if (res?.ok) {
-      const data = await res.json();
-      setConversations(data);
-    }
-  };
-
-  const loadMessages = async (id: string) => {
-    const res = await apiFetch(`/api/conversations/${id}/messages`);
-    if (res?.ok) {
-      const data = await res.json();
-      setMessages(data.messages || []);
-    }
-  };
-
-  const handleNewChat = () => {
-    // --- CRITICAL FIX 2: Aggressive state clearing ---
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setCurrentConvId(null);
-    setMessages([]); // Force immediate synchronous clear
-    setIsGenerating(false);
-    // -------------------------------------------------
-  };
-
   const uploadAttachments = async (attachments: any[], convId: string | null) => {
-    const formData = new FormData();
-    attachments.forEach(att => formData.append('file', att.file));
-    if (convId) formData.append('conversation_id', convId);
-    
-    // In our backend it handles single upload 'file' from multer upload.single
-    // So we'll upload them iteratively to match standard multer setup, or modify server?
-    // We used upload.single in server.ts! So we loop and upload one by one.
     const attIds = [];
     for (const att of attachments) {
       const fd = new FormData();
@@ -128,140 +79,72 @@ export default function App() {
     return attIds;
   };
 
-  const handleSend = async (text: string, rawAttachments: any[]) => {
-    // 1. Optimistic UI first
-    const tempId = Math.random().toString();
-    const streamingMsgId = crypto.randomUUID();
-    let finalConvId = currentConvId;
-    
-    const newMsg = {
-      id: tempId,
-      role: 'user',
-      content: text,
-      attachments: rawAttachments.map(f => ({ 
-         id: Math.random(), 
-         isImage: f.isImage, 
-         originalName: f.name, 
-         sizeBytes: f.size, 
-         mimeType: f.type, 
-         url: f.preview 
-      }))
-    };
-    
-    setMessages(prev => [...prev, newMsg, { id: streamingMsgId, role: 'assistant', content: '', isStreaming: true }]);
-    abortControllerRef.current = new AbortController();
+  const {
+    messages,
+    setMessages,
+    isGenerating,
+    setIsGenerating,
+    currentConvId,
+    setCurrentConvId,
+    generationError,
+    messagesEndRef,
+    scrollToBottom,
+    handleSendRequest,
+    cancelGeneration,
+    retryGeneration
+  } = useChatStreaming({
+    onSyncMessages: (id: string) => loadMessages(id),
+    onAddConversation: () => loadConversations(),
+    apiFetch,
+    uploadAttachments
+  });
 
-    try {
-      // 2. Upload attachments gracefully
-      let aidList: string[] = [];
-      if (rawAttachments.length > 0) {
-        try {
-          aidList = await uploadAttachments(rawAttachments, finalConvId);
-        } catch (err) {
-          alert("Upload failed. Please try again.");
-          setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== streamingMsgId));
-          return;
-        }
-      }
-      
-      // Revoke object URLs once uploaded
-      rawAttachments.forEach(att => {
-          if (att.preview && att.preview.startsWith('blob:')) {
-              URL.revokeObjectURL(att.preview);
-          }
-      });
-
-      // 3. Initiate the Stream
-      const token = await auth.currentUser!.getIdToken();
-      const res = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          message: text,
-          conversation_id: finalConvId,
-          attachment_ids: aidList,
-          history: messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
-        }),
-        signal: abortControllerRef.current.signal
-      });
-
-      if (!res.ok) {
-        throw new Error(`Server returned status: ${res.status}`);
-      }
-
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let assistantContent = '';
-      let buffer = '';
-      setIsGenerating(true);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        // --- CRITICAL FIX 1: Force UI reset on stream close ---
-        if (done) {
-          setIsGenerating(false);
-          setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
-          break;
-        }
-        // ------------------------------------------------------
-        
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            
-            if (data.type === 'conversation_id') {
-              finalConvId = data.id;
-              setCurrentConvId(data.id);
-              loadConversations();
-            } else if (data.type === 'token') {
-              assistantContent += data.content;
-              setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, content: assistantContent, isStreaming: true } : m));
-            } else if (data.type === 'done') {
-              setIsGenerating(false);
-              setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
-              loadConversations();
-              
-              // Sync final state from DB
-              if (finalConvId) loadMessages(finalConvId);
-              else if (data.conversation_id) loadMessages(data.conversation_id);
-            }
-          } catch (parseError) {
-             console.warn("Incomplete JSON chunk skipped, waiting for remainder.");
-          }
-        }
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        console.warn('Stream failed:', err);
-        setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, content: "Couldn't reach the server — please try again", isStreaming: false } : m));
-      } else {
-        setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
-      }
-      setIsGenerating(false);
-    } finally {
-      abortControllerRef.current = null;
+  const loadSuggestedPrompts = async () => {
+    const res = await apiFetch('/api/suggested-prompts');
+    if (res?.ok) {
+      setSuggestedPrompts(await res.json());
     }
   };
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView();
+    if (currentConvId && !isGenerating) {
+      loadMessages(currentConvId);
+      localStorage.setItem('lastOpenedConvId', currentConvId);
+    } else if (!currentConvId) {
+      setMessages([]);
+      localStorage.removeItem('lastOpenedConvId');
     }
-  }, [messages]);
+  }, [currentConvId]);
+
+  const loadConversations = async () => {
+    const res = await apiFetch('/api/conversations');
+    if (res?.ok) {
+      const data = await res.json();
+      setConversations(data);
+    }
+  };
+
+  const loadMessages = async (id: string) => {
+    const res = await apiFetch(`/api/conversations/${id}/messages`);
+    if (res?.ok) {
+      const data = await res.json();
+      setMessages(data.messages || []);
+    }
+  };
+
+  const handleNewChat = () => {
+    cancelGeneration();
+    setCurrentConvId(null);
+    setMessages([]);
+  };
+
+  const handleSend = async (text: string, rawAttachments: any[]) => {
+    const token = await auth.currentUser!.getIdToken();
+    handleSendRequest(text, rawAttachments, currentConvId, token, messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })));
+  };
 
   const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    cancelGeneration();
   };
 
   const handlePromptClick = (prompt: string) => {
@@ -299,44 +182,43 @@ export default function App() {
       />
       
       <div className="flex-1 flex flex-col relative h-full bg-brand-light">
-        <div className="h-16 flex flex-row items-center justify-between px-4 sm:px-6 shrink-0 z-10 bg-brand-primary text-white border-0 shadow-sm">
+        <div className="h-14 flex flex-row items-center justify-between px-4 sm:px-6 shrink-0 z-10 bg-brand-light border-b border-brand-border">
           <div className="flex items-center gap-2">
-              <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-1.5 -ml-2 text-white/70 hover:bg-white/10 rounded-md transition-colors">
+              <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-1.5 -ml-2 text-brand-primary hover:bg-black/5 rounded-md transition-colors">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
              </button>
-             <div className="hidden sm:flex w-7 h-7 bg-brand-accent rounded items-center justify-center text-brand-primary text-sm font-bold mr-1">D</div>
-             <h2 className="text-base font-bold tracking-tight text-white">DOLPHI</h2>
-             {isGenerating && <div className="ml-2 w-1.5 h-1.5 rounded-full bg-brand-accent animate-pulse"></div>}
+             {isGenerating && <div className="hidden md:block ml-2 w-1.5 h-1.5 rounded-full bg-brand-accent animate-pulse"></div>}
           </div>
-          <div className="flex-1 px-4 flex justify-center overflow-hidden whitespace-nowrap text-ellipsis max-w-md text-[15px] text-white/80 font-medium">
+          <div className="flex-1 px-4 flex justify-center md:justify-start overflow-hidden whitespace-nowrap text-ellipsis max-w-md text-[14px] text-gray-500 font-medium">
              {currentConvId ? conversations.find(c => c.id === currentConvId)?.title : ''}
           </div>
-          <div className="flex items-center gap-4 w-[120px]">
-             {/* Removed Search and Settings per user request */}
+          <div className="flex items-center gap-4 w-[120px] justify-end">
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-6 custom-scrollbar flex justify-center">
+        <div id="scroll-container" className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-6 custom-scrollbar flex justify-center">
           <div className="w-full max-w-[900px]">
           {messages.length === 0 ? (
-            <div className="flex flex-col justify-center items-center mt-8 mb-8 px-4">
-              <div className="w-14 h-14 bg-brand-primary rounded-xl shadow-sm flex items-center justify-center mb-4">
-                <span className="text-2xl font-bold text-brand-accent">D</span>
+            <div className="flex flex-col justify-center items-center mt-8 mb-8 px-4 h-full min-h-[50vh] animate-in fade-in zoom-in-95 duration-500">
+              <div className="w-16 h-16 bg-gradient-to-tr from-brand-primary to-[#2a507a] rounded-2xl shadow-xl shadow-brand-primary/10 flex items-center justify-center mb-6 ring-1 ring-white/50">
+                <span className="text-3xl font-extrabold text-white">D</span>
               </div>
-              <h1 className="text-2xl font-bold mb-2 text-brand-primary tracking-tight">Welcome to DOLPHI</h1>
-              <p className="text-[15px] mb-8 text-gray-500 max-w-lg text-center leading-relaxed">Your intelligent document, knowledge base, and conversation assistant.</p>
+              <h1 className="text-[28px] font-bold mb-3 text-gray-900 tracking-tight text-center">How can I help you today?</h1>
+              <p className="text-[15px] mb-10 text-gray-500 max-w-lg text-center leading-relaxed">I can answer questions, analyze documents, and search your secure knowledge base.</p>
               
               {suggestedPrompts.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl w-full">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl w-full">
                   {suggestedPrompts.map((item) => (
                     <button 
                       key={item.id}
                       onClick={() => handlePromptClick(item.title)}
-                      className="p-4 rounded-xl flex flex-col text-left transition-all bg-white border border-brand-border hover:border-brand-accent hover:shadow-[0_4px_12px_rgba(0,0,0,0.05)] group shadow-sm h-full w-full"
+                      className="p-4 rounded-xl flex flex-col text-left transition-all bg-white border border-gray-200 hover:border-brand-primary/50 hover:bg-gray-50 hover:shadow-md group shadow-sm w-full focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
                     >
-                      {item.icon && <div className="text-xl mb-2">{item.icon}</div>}
-                      <span className="text-[15px] font-semibold text-brand-primary mb-1">{item.title}</span>
-                      {item.description && <span className="text-[13px] text-gray-500 leading-snug">{item.description}</span>}
+                      <div className="flex items-center gap-2 mb-2">
+                         {item.icon && <span className="text-lg opacity-80 group-hover:opacity-100 transition-opacity">{item.icon}</span>}
+                         <span className="text-[14px] font-semibold text-gray-900">{item.title}</span>
+                      </div>
+                      {item.description && <span className="text-[13px] text-gray-500 leading-snug line-clamp-2">{item.description}</span>}
                     </button>
                   ))}
                 </div>
@@ -344,9 +226,12 @@ export default function App() {
             </div>
           ) : (
             <div className="pb-10">
-              {messages.map((m, i) => (
-                <MessageBubble key={m.id || i} message={m} />
-              ))}
+              {messages.map((m: any, i: number) => {
+                if (m.isStreaming || m.isError) {
+                  return <StreamingMessage key={m.id || i} message={m} onRetry={() => retryGeneration(m)} />
+                }
+                return <MessageBubble key={m.id || i} message={m} />;
+              })}
               <div ref={messagesEndRef} />
             </div>
           )}

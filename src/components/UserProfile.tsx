@@ -20,6 +20,22 @@ export function UserProfile() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && showSignOutConfirm) {
+        setShowSignOutConfirm(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [showSignOutConfirm]);
+
+  const handleModalClickOutside = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      setShowSignOutConfirm(false);
+    }
+  };
+
   if (!user) return null;
 
   const handleSignOut = async () => {
@@ -90,14 +106,20 @@ export function UserProfile() {
       </div>
 
       {showSignOutConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-50">
-          <div className="bg-white rounded-xl shadow-lg w-[320px] p-6 animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-bold text-gray-900 mb-2">Sign Out?</h3>
-            <p className="text-sm text-gray-500 mb-6">Are you sure you want to sign out of DOLPHI?</p>
-            <div className="flex items-center justify-end gap-3">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={handleModalClickOutside}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+        >
+          <div className="bg-white rounded-xl shadow-2xl w-[320px] p-6 animate-in zoom-in-95 duration-200">
+            <h3 id="modal-title" className="text-lg font-bold text-gray-900 mb-2">Sign Out?</h3>
+            <p className="text-sm text-gray-500 mb-6 leading-relaxed">Are you sure you want to sign out of DOLPHI?</p>
+            <div className="flex items-center justify-end gap-3 mt-2">
                <button 
                  onClick={() => setShowSignOutConfirm(false)}
-                 className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                 className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors focus:ring-2 focus:ring-gray-200 focus:outline-none"
                >
                  Cancel
                </button>
@@ -106,7 +128,8 @@ export function UserProfile() {
                    setShowSignOutConfirm(false);
                    handleSignOut();
                  }}
-                 className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors"
+                 autoFocus
+                 className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:outline-none"
                >
                  Sign Out
                </button>
