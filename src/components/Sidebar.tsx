@@ -115,7 +115,7 @@ export function Sidebar({ conversations, currentConvId, onSelect, onNew, onDelet
         <div className="p-4 flex flex-col gap-4">
           <div className="flex items-center justify-between px-2 mb-2">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-accent to-[#d4a000] flex items-center justify-center text-brand-primary font-bold text-lg shadow-sm">D</div>
+              <img src="/logo.png" alt="DOLPHI Logo" className="w-8 h-8 object-contain rounded-md bg-white p-0.5" referrerPolicy="no-referrer" />
               <h1 className="text-lg font-bold tracking-tight text-white">DOLPHI</h1>
             </div>
             <button 
@@ -207,8 +207,8 @@ function ChatItem({conv, currentConvId, onSelect, editingId, setEditingId, editT
 
   return (
     <div 
-      className={`group relative flex items-center h-11 px-3 cursor-pointer rounded-lg transition-colors border-l-[3px]
-                  ${isActive ? 'bg-[rgba(245,197,24,0.15)] border-brand-accent text-white font-medium' : 'border-transparent text-white/80 hover:bg-white/10 hover:text-white'}`}
+      className={`group relative flex items-center h-11 px-3 cursor-pointer rounded-lg transition-colors 
+                  ${isActive ? 'bg-white/10 text-brand-accent font-semibold shadow-sm' : 'border-transparent text-white/70 hover:bg-white/5 hover:text-white'}`}
       onClick={() => { if(!isEditing) onSelect(conv.id); }}
     >
       {isEditing ? (

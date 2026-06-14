@@ -223,8 +223,8 @@ export class ClaudeProvider implements AIProvider {
 }
 
 const providersCache: Record<string, AIProvider> = {
-    'gemini': new GeminiProvider('gemini', 'gemini-2.5-flash'),
-    'gemini15': new GeminiProvider('gemini15', 'gemini-3.5-flash'),
+    'gemini': new GeminiProvider('gemini', 'gemini-flash-lite-latest'),
+    'gemini15': new GeminiProvider('gemini15', 'gemini-flash-lite-latest'),
 };
 
 if (process.env.OPENAI_API_KEY) {

@@ -5,7 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { AIService } from './provider.ts';
 import { VECTOR_DIM, SEMANTIC_CACHE_THRESHOLD } from './constants.ts';
 
-const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-3.5-flash';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-flash-lite-latest';
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
   try {

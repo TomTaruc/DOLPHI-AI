@@ -54,20 +54,22 @@ export function StreamingMessage({ message, onRetry }: { message: any, onRetry?:
   // Render markdown with streaming cursor
   return (
     <div className="w-full flex justify-start mb-4 group relative">
-      <div className="mr-5 mt-1.5 flex-shrink-0 w-[34px] h-[34px] flex items-center justify-center rounded-lg bg-[#1a3a5c] text-[#f59e0b] text-sm font-bold shadow-sm" >
-        D
+      <div className="mr-5 mt-1.5 flex-shrink-0 w-[36px] h-[36px] flex items-center justify-center rounded-xl bg-white border border-gray-200 shadow-sm overflow-hidden p-1" >
+        <img src="/logo.png" alt="DOLPHI" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
       </div>
       
       <div 
-        className="relative shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-[#e2e8f0]"
+        className="relative "
         style={{
           width: '100%',
           backgroundColor: '#ffffff',
-          borderRadius: '16px',
-          padding: '16px 20px',
-          color: '#1f2937',
+          borderRadius: '20px',
+          padding: '20px 28px',
+          color: '#111827',
           fontSize: '15px',
-          lineHeight: '1.7',
+          lineHeight: '1.75',
+          border: '1px solid #E5E7EB',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
         }}
       >
         <div className="markdown-body">

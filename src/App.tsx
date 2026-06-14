@@ -182,17 +182,19 @@ export default function App() {
       />
       
       <div className="flex-1 flex flex-col relative h-full bg-brand-light">
-        <div className="h-14 flex flex-row items-center justify-between px-4 sm:px-6 shrink-0 z-10 bg-brand-light border-b border-brand-border">
-          <div className="flex items-center gap-2">
-              <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-1.5 -ml-2 text-brand-primary hover:bg-black/5 rounded-md transition-colors">
+        <div className="h-13 sm:h-14 flex flex-row items-center justify-between px-4 sm:px-6 shrink-0 z-10 bg-white border-b border-gray-200 relative">
+          <div className="flex items-center gap-2 relative z-10">
+              <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-1.5 -ml-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-colors">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
              </button>
-             {isGenerating && <div className="hidden md:block ml-2 w-1.5 h-1.5 rounded-full bg-brand-accent animate-pulse"></div>}
+             {isGenerating && <div className="hidden md:block ml-2 w-2 h-2 rounded-full bg-brand-accent animate-pulse"></div>}
           </div>
-          <div className="flex-1 px-4 flex justify-center md:justify-start overflow-hidden whitespace-nowrap text-ellipsis max-w-md text-[14px] text-gray-500 font-medium">
-             {currentConvId ? conversations.find(c => c.id === currentConvId)?.title : ''}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-12">
+            <span className="text-[15px] text-gray-800 font-semibold truncate pointer-events-auto max-w-[200px] sm:max-w-xs md:max-w-md lg:max-w-lg text-center tracking-tight">
+               {currentConvId ? conversations.find(c => c.id === currentConvId)?.title : ''}
+            </span>
           </div>
-          <div className="flex items-center gap-4 w-[120px] justify-end">
+          <div className="flex items-center gap-4 min-w-[32px] md:w-[120px] justify-end relative z-10">
           </div>
         </div>
 
@@ -200,9 +202,7 @@ export default function App() {
           <div className="w-full max-w-[900px]">
           {messages.length === 0 ? (
             <div className="flex flex-col justify-center items-center mt-8 mb-8 px-4 h-full min-h-[50vh] animate-in fade-in zoom-in-95 duration-500">
-              <div className="w-16 h-16 bg-gradient-to-tr from-brand-primary to-[#2a507a] rounded-2xl shadow-xl shadow-brand-primary/10 flex items-center justify-center mb-6 ring-1 ring-white/50">
-                <span className="text-3xl font-extrabold text-white">D</span>
-              </div>
+              <img src="/logo.png" alt="DOLPHI Logo" className="w-16 h-16 mb-6 object-contain mix-blend-multiply" referrerPolicy="no-referrer" />
               <h1 className="text-[28px] font-bold mb-3 text-gray-900 tracking-tight text-center">How can I help you today?</h1>
               <p className="text-[15px] mb-10 text-gray-500 max-w-lg text-center leading-relaxed">I can answer questions, analyze documents, and search your secure knowledge base.</p>
               
@@ -212,7 +212,7 @@ export default function App() {
                     <button 
                       key={item.id}
                       onClick={() => handlePromptClick(item.title)}
-                      className="p-4 rounded-xl flex flex-col text-left transition-all bg-white border border-gray-200 hover:border-brand-primary/50 hover:bg-gray-50 hover:shadow-md group shadow-sm w-full focus:outline-none focus:ring-2 focus:ring-brand-primary/20"
+                      className="p-4 rounded-xl flex flex-col text-left transition-all bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 hover:shadow-md group shadow-sm w-full focus:outline-none focus:ring-2 focus:ring-gray-200"
                     >
                       <div className="flex items-center gap-2 mb-2">
                          {item.icon && <span className="text-lg opacity-80 group-hover:opacity-100 transition-opacity">{item.icon}</span>}
@@ -243,7 +243,7 @@ export default function App() {
             <InputBar onSend={handleSend} isGenerating={isGenerating} onStop={handleStop} />
             
             <div className="text-center mt-4">
-               <div className="text-[12px] text-[#64748b] font-normal">
+               <div className="text-[12px] text-gray-400 font-normal">
                  Developed by Taruc & Alcantara | CSS140-1 | EM01-1
                </div>
             </div>

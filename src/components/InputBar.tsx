@@ -71,24 +71,24 @@ export function InputBar({ onSend, isGenerating, onStop }) {
 
   return (
     <div className="w-full relative">
-      <div className="w-full flex flex-col group relative rounded-[16px] transition-all shadow-sm bg-brand-primary focus-within:shadow-[0_0_0_2px_rgba(245,197,24,0.5)]">
+      <div className="w-full flex flex-col group relative rounded-2xl transition-all shadow-[0_2px_12px_rgba(0,0,0,0.04)] bg-white border border-gray-200 focus-within:border-gray-300 focus-within:shadow-[0_4px_24px_rgba(0,0,0,0.06)]">
         
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 p-3 pb-0">
             {attachments.map((att, i) => (
-              <div key={att.id} className="relative flex items-center rounded-xl bg-white/10 border border-white/20 pr-1 group/att">
+              <div key={att.id} className="relative flex items-center rounded-xl bg-gray-50 border border-gray-200 pr-1 group/att">
                 {att.isImage ? (
-                  <div className="w-12 h-12 rounded-l-xl overflow-hidden bg-black/20 border-r border-white/20">
+                  <div className="w-12 h-12 rounded-l-xl overflow-hidden bg-gray-100 border-r border-gray-200">
                     <img src={att.preview || ''} className="w-full h-full object-cover" alt="preview" />
                   </div>
                 ) : (
-                  <div className="w-10 h-10 flex items-center justify-center bg-white/10 rounded-lg ml-1 border border-white/10">
+                  <div className="w-10 h-10 flex items-center justify-center bg-gray-100 rounded-lg ml-1 border border-gray-200">
                     <span className="text-xl">📄</span>
                   </div>
                 )}
                 <div className="flex flex-col px-3 max-w-[140px]">
-                   <span className="text-xs truncate font-medium text-white">{att.name}</span>
-                   <span className="text-[11px] text-white/50 mt-0.5">{Math.round(att.size/1024)} KB</span>
+                   <span className="text-xs truncate font-medium text-gray-700">{att.name}</span>
+                   <span className="text-[11px] text-gray-500 mt-0.5">{Math.round(att.size/1024)} KB</span>
                 </div>
                 <button 
                   onClick={() => removeAttachment(i)} 
@@ -103,7 +103,7 @@ export function InputBar({ onSend, isGenerating, onStop }) {
 
         <div className="flex items-end p-2 pb-2">
           <button 
-            className="p-2.5 mx-1 rounded-xl text-white hover:text-brand-accent hover:bg-white/10 transition-colors"
+            className="p-2.5 mx-1 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
             onClick={() => fileInputRef.current?.click()}
             title="Attach files"
           >
@@ -125,7 +125,7 @@ export function InputBar({ onSend, isGenerating, onStop }) {
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             placeholder="Message DOLPHI..."
-            className="flex-1 max-h-[250px] min-h-[44px] bg-transparent border-none outline-none resize-none py-[14px] px-2 custom-scrollbar text-[15px] text-white placeholder-white/65 min-w-0 leading-relaxed"
+            className="flex-1 max-h-[250px] min-h-[44px] bg-transparent border-none outline-none resize-none py-[14px] px-2 custom-scrollbar text-[15px] text-gray-900 placeholder-gray-400 min-w-0 leading-relaxed"
             rows={1}
             style={{ overflowY: text.split('\n').length > 5 ? 'auto' : 'hidden' }}
           />
@@ -133,7 +133,7 @@ export function InputBar({ onSend, isGenerating, onStop }) {
           {isGenerating ? (
             <button 
               onClick={onStop}
-              className="w-9 h-9 rounded-xl flex justify-center items-center m-1.5 transition-colors bg-white/20 hover:bg-white/30 text-white"
+              className="w-9 h-9 rounded-xl flex justify-center items-center m-1.5 transition-colors bg-gray-100 hover:bg-gray-200 text-gray-700"
               title="Stop generating"
             >
               <Square size={14} fill="currentColor" />
@@ -142,7 +142,7 @@ export function InputBar({ onSend, isGenerating, onStop }) {
             <button 
               onClick={handleSend}
               disabled={!text.trim() && attachments.length === 0}
-              className="w-9 h-9 flex-shrink-0 rounded-xl flex justify-center items-center m-1.5 transition-all disabled:opacity-50 disabled:bg-white/10 disabled:text-white/30 text-brand-primary bg-brand-accent hover:bg-[#e4b400]"
+              className="w-9 h-9 flex-shrink-0 rounded-xl flex justify-center items-center m-1.5 transition-all disabled:opacity-50 disabled:bg-gray-100 disabled:text-gray-300 text-white bg-[#0B2341] hover:bg-[#113159]"
             >
               <ArrowUp size={18} strokeWidth={2.5} />
             </button>

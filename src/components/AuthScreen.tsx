@@ -82,9 +82,7 @@ export function AuthScreen() {
     <div className="min-h-screen w-full flex items-center justify-center bg-white">
       <div className="w-full max-w-[400px] p-8 -mt-20">
         <div className="flex justify-center mb-8">
-          <div className="w-12 h-12 bg-brand-primary rounded-xl shadow-sm flex items-center justify-center mb-4">
-            <span className="text-xl font-bold text-brand-accent">D</span>
-          </div>
+          <img src="/logo.png" alt="DOLPHI Logo" className="w-16 h-16 object-contain mb-4 mix-blend-multiply" referrerPolicy="no-referrer" />
         </div>
         
         <h1 className="text-2xl font-bold text-center text-gray-900 tracking-tight mb-2">

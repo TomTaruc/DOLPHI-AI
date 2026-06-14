@@ -16,7 +16,7 @@ import fetch from "node-fetch";
 import { AIService } from "./src/lib/provider.ts";
 import { MAX_HISTORY_MESSAGES } from "./src/lib/constants.ts";
 
-const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-3.5-flash';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-flash-lite-latest';
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
   try {
@@ -266,7 +266,24 @@ async function startServer() {
           try {
             const response = await AIService.generateContent({
               model: CHAT_MODEL,
-              contents: `Generate a short title (3-6 words) for a conversation starting with this message. Output ONLY the title, no quotes or prefix.\n\nMessage: ${message}`
+              contents: `Generate a concise and meaningful title (3-8 words) for a conversation based on this user query.
+Requirements:
+- Capture the primary topic or intent exactly (e.g., \"Network Segmentation\", \"Firewall Policies and ACLs\").
+- NEVER use generic titles like \"New Conversation\", \"Beginning a New Conversation\", \"Hello\", \"Hi\", or \"Untitled Chat\".
+- Base it on the core subject matter of the query.
+- Output ONLY the title, no quotes, no prefix.
+
+Examples:
+Query: \"What is network segmentation?\"
+Title: Network Segmentation
+Query: \"Explain firewall policies and ACLs\"
+Title: Firewall Policies and ACLs
+Query: \"Summarize the uploaded cybersecurity textbook\"
+Title: Cybersecurity Textbook Summary
+Query: \"Compare IDS and IPS\"
+Title: IDS vs IPS Comparison
+
+Query: ${message}`
             });
             const title = response.text?.trim();
             if (title) {

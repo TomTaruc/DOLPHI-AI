@@ -18,24 +18,24 @@ export function MessageBubble({ message }: { message: any }) {
   return (
     <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'} mb-4 group`}>
       {!isUser && (
-        <div className="mr-5 mt-1.5 flex-shrink-0 w-[34px] h-[34px] flex items-center justify-center rounded-lg bg-brand-primary text-brand-accent text-sm font-bold shadow-sm" >
-          D
+        <div className="mr-5 mt-1.5 flex-shrink-0 w-[36px] h-[36px] flex items-center justify-center rounded-xl bg-white border border-gray-200 shadow-sm overflow-hidden p-1" >
+          <img src="/logo.png" alt="DOLPHI" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
         </div>
       )}
       
       <div 
         className="relative"
         style={{
-          maxWidth: isUser ? '85%' : '100%',
+          maxWidth: isUser ? '80%' : '100%',
           width: isUser ? 'auto' : '100%',
-          backgroundColor: isUser ? '#1a3a5c' : '#ffffff',
-          borderRadius: isUser ? '16px 16px 4px 16px' : '16px',
-          padding: isUser ? '12px 18px' : '16px 20px',
-          color: isUser ? '#ffffff' : '#1f2937',
+          backgroundColor: isUser ? '#0B2341' : '#ffffff',
+          borderRadius: isUser ? '20px 20px 4px 20px' : '20px',
+          padding: isUser ? '16px 22px' : '20px 28px',
+          color: isUser ? '#ffffff' : '#111827',
           fontSize: '15px',
-          lineHeight: '1.7',
-          border: isUser ? 'none' : '1px solid #e2e8f0',
-          boxShadow: isUser ? '0 1px 2px rgba(0,0,0,0.1)' : '0 1px 3px rgba(0,0,0,0.05)',
+          lineHeight: '1.75',
+          border: isUser ? 'none' : '1px solid #E5E7EB',
+          boxShadow: isUser ? '0 2px 4px rgba(0,0,0,0.05)' : '0 4px 12px rgba(0,0,0,0.03)',
         }}
       >
         {message.attachments?.map((att: any) => (
