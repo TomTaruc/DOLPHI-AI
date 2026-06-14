@@ -292,7 +292,14 @@ async function startServer() {
       }
 
       // Check cache
-      const cached = await checkSemanticCache(message, intent, attachment_ids, history.length);
+      // --- CRITICAL FIX 3A: Bypass cache if there is conversation history ---
+      const isFreshQuery = !history || history.length === 0;
+      const hasNoAttachments = !attachment_ids || attachment_ids.length === 0;
+      
+      const cached = (isFreshQuery && hasNoAttachments) 
+          ? await checkSemanticCache(message, intent, attachment_ids, history.length) 
+          : null;
+      // ----------------------------------------------------------------------
       console.log(`[STREAM] Cache check done | hit=${!!cached}`);
       
       if (cached) {
@@ -441,13 +448,16 @@ async function startServer() {
 
          // Save to query cache implicitly
          const finalEmbedding = await embedText(message).catch(e => null);
-         if (finalEmbedding && finalEmbedding.length > 0) {
+         
+         // --- CRITICAL FIX 3B: ONLY save zero-shot global queries to the cache ---
+         if (isFreshQuery && hasNoAttachments && finalEmbedding && finalEmbedding.length > 0) {
             await db.insert(queryCache).values({
                queryText: message,
                queryEmbedding: finalEmbedding,
                answer: finalAnswer,
             });
          }
+         // ------------------------------------------------------------------------
 
          // Log analytics
          await db.insert(retrievalLogs).values({

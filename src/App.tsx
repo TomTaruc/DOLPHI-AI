@@ -85,7 +85,15 @@ export default function App() {
   };
 
   const handleNewChat = () => {
+    // --- CRITICAL FIX 2: Aggressive state clearing ---
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setCurrentConvId(null);
+    setMessages([]); // Force immediate synchronous clear
+    setIsGenerating(false);
+    // -------------------------------------------------
   };
 
   const uploadAttachments = async (attachments: any[], convId: string | null) => {
@@ -188,7 +196,14 @@ export default function App() {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        
+        // --- CRITICAL FIX 1: Force UI reset on stream close ---
+        if (done) {
+          setIsGenerating(false);
+          setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
+          break;
+        }
+        // ------------------------------------------------------
         
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n\n');
