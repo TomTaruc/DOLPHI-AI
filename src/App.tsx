@@ -43,27 +43,28 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (currentConvId) {
+    if (currentConvId && !isGenerating) {
       loadMessages(currentConvId);
-    } else {
+    } else if (!currentConvId) {
       setMessages([]);
     }
   }, [currentConvId]);
 
   const apiFetch = async (url: string, options: any = {}) => {
-    if (!auth.currentUser) return null;
+    if (!auth.currentUser) return { ok: false, json: async () => ({}) };
     try {
       const token = await auth.currentUser.getIdToken();
-      return await fetch(url, {
+      const response = await fetch(url, {
         ...options,
         headers: {
           ...options.headers,
           Authorization: `Bearer ${token}`
         }
       });
+      return response;
     } catch (err) {
       console.warn("Network error during apiFetch (server might be restarting):", err);
-      return null;
+      return { ok: false, json: async () => ({}) };
     }
   };
 
@@ -122,6 +123,8 @@ export default function App() {
   const handleSend = async (text: string, rawAttachments: any[]) => {
     // 1. Optimistic UI first
     const tempId = Math.random().toString();
+    const streamingMsgId = crypto.randomUUID();
+    
     const newMsg = {
       id: tempId,
       role: 'user',
@@ -136,7 +139,7 @@ export default function App() {
       }))
     };
     
-    setMessages(prev => [...prev, newMsg, { role: 'assistant', content: '', isStreaming: true }]);
+    setMessages(prev => [...prev, newMsg, { id: streamingMsgId, role: 'assistant', content: '', isStreaming: true }]);
     abortControllerRef.current = new AbortController();
 
     // 2. Upload attachments gracefully
@@ -144,14 +147,19 @@ export default function App() {
     if (rawAttachments.length > 0) {
       try {
         aidList = await uploadAttachments(rawAttachments, currentConvId);
-        // We could theoretically update the message attachment IDs here, but mostly it doesn't matter for the UI since they have object URLs
       } catch (err) {
-        alert("Image upload failed. Please try again.");
-        // Rollback
-        setMessages(prev => prev.filter(m => m.id !== tempId && m.role !== 'assistant'));
+        alert("Upload failed. Please try again.");
+        setMessages(prev => prev.filter(m => m.id !== tempId && m.id !== streamingMsgId));
         return;
       }
     }
+    
+    // Revoke object URLs once uploaded
+    rawAttachments.forEach(att => {
+        if (att.preview && att.preview.startsWith('blob:')) {
+            URL.revokeObjectURL(att.preview);
+        }
+    });
 
     // 3. Initiate the Stream
     const token = await auth.currentUser!.getIdToken();
@@ -166,7 +174,7 @@ export default function App() {
           message: text,
           conversation_id: currentConvId,
           attachment_ids: aidList,
-          history: messages.slice(-10)
+          history: messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
         }),
         signal: abortControllerRef.current.signal
       });
@@ -190,21 +198,15 @@ export default function App() {
             loadConversations();
           } else if (data.type === 'token') {
             assistantContent += data.content;
-            setMessages(prev => {
-              const newMsgs = [...prev];
-              newMsgs[newMsgs.length - 1] = { role: 'assistant', content: assistantContent, isStreaming: true };
-              return newMsgs;
-            });
+            setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, content: assistantContent, isStreaming: true } : m));
           } else if (data.type === 'done') {
             setIsGenerating(false);
-            setMessages(prev => {
-              const newMsgs = [...prev];
-              if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1]) {
-                newMsgs[newMsgs.length - 1].isStreaming = false;
-              }
-              return newMsgs;
-            });
+            setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
             loadConversations();
+            
+            // Sync final state from DB
+            if (currentConvId) loadMessages(currentConvId);
+            else if (data.conversation_id) loadMessages(data.conversation_id);
           }
         }
       }
@@ -213,13 +215,9 @@ export default function App() {
         console.warn(err);
       }
       setIsGenerating(false);
-      setMessages(prev => {
-        const newMsgs = [...prev];
-        if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1]) {
-          newMsgs[newMsgs.length - 1].isStreaming = false;
-        }
-        return newMsgs;
-      });
+      setMessages(prev => prev.map(m => m.id === streamingMsgId ? { ...m, isStreaming: false } : m));
+    } finally {
+      abortControllerRef.current = null;
     }
   };
 

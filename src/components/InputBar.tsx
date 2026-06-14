@@ -62,6 +62,10 @@ export function InputBar({ onSend, isGenerating, onStop }) {
   };
 
   const removeAttachment = (index: number) => {
+    const attToRemove = attachments[index];
+    if (attToRemove?.preview && attToRemove.preview.startsWith('blob:')) {
+        URL.revokeObjectURL(attToRemove.preview);
+    }
     setAttachments(attachments.filter((_, i) => i !== index));
   };
 

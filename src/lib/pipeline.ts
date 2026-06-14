@@ -3,6 +3,7 @@ import { queryCache, retrievalLogs } from '../db/schema.ts';
 import { embedText, searchKnowledge } from './retriever.ts';
 import { eq, sql } from 'drizzle-orm';
 import { GoogleGenAI } from '@google/genai';
+import { VECTOR_DIM, SEMANTIC_CACHE_THRESHOLD } from './constants.ts';
 
 const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-2.0-flash';
 
@@ -25,6 +26,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
 
 // Simple LRU-like cache for query rewriting
 const rewriteCache = new Map<string, string>();
+
+let pgVectorFailed = false;
 
 export async function rewriteQuery(userMessage: string, history: any[]): Promise<string> {
     const ai = getGenAI();
@@ -57,7 +60,6 @@ export async function rewriteQuery(userMessage: string, history: any[]): Promise
 }
 
 export async function detectIntent(userMessage: string): Promise<string> {
-    const ai = getGenAI();
     try {
         const text = userMessage.toLowerCase();
         if (/^(hi|hello|hey|greetings)(\s|$)/i.test(text)) return 'greeting';
@@ -67,7 +69,14 @@ export async function detectIntent(userMessage: string): Promise<string> {
         if (/compare|vs/i.test(text)) return 'comparison';
         if (/document|pdf|file/i.test(text)) return 'document_analysis';
         
-        // If heuristic is low confidence, use fallback
+        const knowledgeKeywords = /what|how|when|where|who|why|explain|describe|tell me|define|list|show|find|search/i;
+        if (knowledgeKeywords.test(text)) return 'knowledge_search';
+        
+        if (text.split(' ').length < 20) {
+            return 'general_question'; // default without LLM call for short phrases
+        }
+
+        const ai = getGenAI();
         const prompt = `Classify intent into exactly one of: greeting, small_talk, knowledge_search, document_analysis, image_analysis, follow_up, comparison, summarization, general_question.\nUser Message: ${userMessage}\nReturn ONLY the intent string.`;
         const response = await withRetry(() => ai.models.generateContent({
             model: CHAT_MODEL,
@@ -83,10 +92,15 @@ export async function detectIntent(userMessage: string): Promise<string> {
 export async function checkSemanticCache(query: string, intent: string, attachmentIds?: string[]) {
     if (attachmentIds && attachmentIds.length > 0) return null;
     if (intent !== 'knowledge_search') return null;
-    
+    if (pgVectorFailed) return null;
+
     try {
+        const numQueryCacheRowsResult = await db.execute(sql`SELECT count(*) FROM query_cache`);
+        const numRows = parseInt(numQueryCacheRowsResult.rows[0].count as string);
+        if (numRows === 0) return null; // Avoid issue 23
+
         const embedding = await embedText(query);
-        const similarity = sql<number>`1 - (${queryCache.queryEmbedding} <=> ${JSON.stringify(embedding)}::vector(768))`;
+        const similarity = sql<number>`1 - (${queryCache.queryEmbedding} <=> ${JSON.stringify(embedding)}::vector(${VECTOR_DIM}))`;
         const results = await db.select({
             id: queryCache.id,
             answer: queryCache.answer,
@@ -96,13 +110,17 @@ export async function checkSemanticCache(query: string, intent: string, attachme
         .orderBy(sql`${similarity} DESC`)
         .limit(1);
 
-        if (results.length > 0 && results[0].similarity > 0.97) {
+        if (results.length > 0 && results[0].similarity > SEMANTIC_CACHE_THRESHOLD) {
             // Update hit count
             await db.execute(sql`UPDATE query_cache SET hit_count = hit_count + 1 WHERE id = ${results[0].id}`);
             return results[0].answer;
         }
     } catch(e: any) {
         console.warn("Semantic cache check failed:", e.message);
+        if (e.message?.includes('operator does not exist') || e.message?.includes('function not found') || e.message?.includes('type "vector" does not exist')) {
+            console.warn("pgvector extension not installed. Disabling semantic cache.");
+            pgVectorFailed = true;
+        }
     }
     return null;
 }

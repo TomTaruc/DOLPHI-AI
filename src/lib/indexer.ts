@@ -2,16 +2,21 @@ import fs from 'fs';
 import path from 'path';
 import { db } from '../db/index.ts';
 import { knowledgeChunks, sourceMetadata } from '../db/schema.ts';
-import { embedText } from './retriever.ts';
+import { embedBatch } from './retriever.ts';
 import crypto from 'crypto';
 import { eq } from 'drizzle-orm';
+import { createRequire } from 'module';
+import { CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_BATCH_SIZE } from './constants.ts';
+import JSZip from 'jszip';
+import * as XLSX from 'xlsx';
 
-import pdfParse from 'pdf-parse';
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
 import mammoth from 'mammoth';
 
 const KNOWLEDGE_DIR = process.env.KNOWLEDGE_DIR || path.join(process.cwd(), 'knowledge');
 
-function chunkText(text: string, chunkSize: number = 800, overlap: number = 120): string[] {
+function chunkText(text: string, chunkSize: number = CHUNK_SIZE, overlap: number = CHUNK_OVERLAP): string[] {
   const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) || [text];
   const chunks: string[] = [];
   let currentChunk = '';
@@ -19,7 +24,6 @@ function chunkText(text: string, chunkSize: number = 800, overlap: number = 120)
   for (const sentence of sentences) {
     if (currentChunk.length + sentence.length > chunkSize && currentChunk.length > 0) {
       chunks.push(currentChunk.trim());
-      // overlap: take the last `overlap` characters from the current chunk
       currentChunk = currentChunk.slice(-overlap) + ' ' + sentence.trim();
     } else {
       currentChunk += (currentChunk.length > 0 ? ' ' : '') + sentence.trim();
@@ -55,8 +59,34 @@ export async function indexKnowledgeBase() {
       } else if (ext === '.docx') {
         const result = await mammoth.extractRawText({ path: filePath });
         content = result.value;
-      } else {
+      } else if (ext === '.csv') {
+        const txt = fs.readFileSync(filePath, 'utf-8');
+        // Simple row formatting to text
+        content = txt.split('\n').map((row, idx) => `Row ${idx + 1}: ${row}`).join('\n');
+      } else if (ext === '.xlsx') {
+        const workbook = XLSX.readFile(filePath);
+        let allTxt = '';
+        workbook.SheetNames.forEach(name => {
+           allTxt += `Sheet: ${name}\n`;
+           allTxt += XLSX.utils.sheet_to_csv(workbook.Sheets[name]) + '\n\n';
+        });
+        content = allTxt;
+      } else if (ext === '.pptx') {
+        const dataBuffer = fs.readFileSync(filePath);
+        const zip = await JSZip.loadAsync(dataBuffer);
+        let allTxt = '';
+        for (const [name, zipObj] of Object.entries(zip.files)) {
+           if (name.startsWith('ppt/slides/') && name.endsWith('.xml')) {
+              const xmlText = await zipObj.async('text');
+              allTxt += xmlText.replace(/<[^>]+>/g, ' ') + ' ';
+           }
+        }
+        content = allTxt;
+      } else if (ext === '.md' || ext === '.txt') {
         content = fs.readFileSync(filePath, 'utf-8');
+      } else {
+        console.warn(`Unsupported file type: ${ext} for ${file}`);
+        continue;
       }
     } catch (err: any) {
       console.warn(`Failed to read file ${file}:`, err.message);
@@ -76,17 +106,29 @@ export async function indexKnowledgeBase() {
 
     // Chunk and index
     const chunks = chunkText(content);
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkContext = chunks[i];
-      const embedding = await embedText(chunkContext);
-      
-      await db.insert(knowledgeChunks).values({
-        sourceFile: file,
-        chunkIndex: i,
-        content: chunkContext,
-        embedding: embedding
-      });
-      totalChunks++;
+    
+    // Batch process embeddings
+    for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
+        const batchChunks = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+        let embeddings: number[][] = [];
+        try {
+           embeddings = await embedBatch(batchChunks);
+        } catch(e: any) {
+           console.warn(`Batch embedding failed for ${file} chunk index ${i}:`, e?.message);
+           continue; // Skip failed batch chunks, proceed to next
+        }
+
+        const values = batchChunks.map((chunk, idx) => ({
+            sourceFile: file,
+            chunkIndex: i + idx,
+            content: chunk,
+            embedding: embeddings[idx] || []
+        })).filter(val => val.embedding.length > 0);
+
+        if (values.length > 0) {
+            await db.insert(knowledgeChunks).values(values);
+            totalChunks += values.length;
+        }
     }
 
     // Upsert metadata

@@ -16,9 +16,11 @@ import { sql } from 'drizzle-orm';
 // Alternatively imported from pgvector/drizzle-orm
 import { customType } from 'drizzle-orm/pg-core';
 
+import { VECTOR_DIM } from '../lib/constants.ts';
+
 const vectorType = customType<{ data: number[]; driverData: string }>({
   dataType() {
-    return 'vector(768)';
+    return `vector(${VECTOR_DIM})`;
   },
   toDriver(value: number[]): string {
     return '[' + value.join(',') + ']';

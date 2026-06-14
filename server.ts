@@ -5,7 +5,7 @@ import multer from "multer";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "./src/db/index.ts";
-import { conversations, messages, attachments, retrievalLogs, queryCache, suggestedPrompts } from "./src/db/schema.ts";
+import { conversations, messages, attachments, retrievalLogs, queryCache, suggestedPrompts, conversationSummaries } from "./src/db/schema.ts";
 import { eq, desc, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { indexKnowledgeBase } from "./src/lib/indexer.ts";
@@ -13,6 +13,7 @@ import { rewriteQuery, detectIntent, checkSemanticCache, verifyAnswer } from "./
 import { searchKnowledge, embedText } from "./src/lib/retriever.ts";
 import fetch from "node-fetch";
 import { GoogleGenAI } from "@google/genai";
+import { MAX_HISTORY_MESSAGES } from "./src/lib/constants.ts";
 
 const CHAT_MODEL = process.env.CHAT_MODEL || 'gemini-2.0-flash';
 
@@ -41,8 +42,7 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const today = new Date().toISOString().split('T')[0];
-    const convId = req.body.conversation_id || 'unassigned';
-    const dir = path.join(UPLOAD_DIR, today, convId);
+    const dir = path.join(UPLOAD_DIR, 'temp', today);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
@@ -67,8 +67,9 @@ async function startServer() {
   // Cleanup orphaned attachments older than 1 day
   setInterval(async () => {
      try {
-        const oldAtts = await db.execute(sql`SELECT * FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
-        for (const att of oldAtts) {
+        const oldAttsRes = await db.execute(sql`SELECT * FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
+        const oldAttsRows = oldAttsRes.rows || [];
+        for (const att of oldAttsRows) {
            if (fs.existsSync(att.storage_path as string)) {
               fs.unlinkSync(att.storage_path as string);
            }
@@ -213,12 +214,15 @@ async function startServer() {
         title: message.slice(0, 40)
       }).returning();
       convId = conv.id;
-      // Also update any attachments that were uploaded before the conv existed
+      
+      // Update attachments that were uploaded before the conv existed
       if (attachment_ids?.length) {
          for (const aid of attachment_ids) {
             await db.execute(sql`UPDATE attachments SET conversation_id = ${convId} WHERE id = ${aid}`);
          }
       }
+
+      const localConvId = convId;
 
       // Generate a better title async
       (async () => {
@@ -230,7 +234,7 @@ async function startServer() {
           });
           const title = response.text?.trim();
           if (title) {
-            await db.update(conversations).set({ title }).where(eq(conversations.id, convId));
+            await db.update(conversations).set({ title }).where(eq(conversations.id, localConvId));
           }
         } catch (e: any) {
            console.warn("Auto-title failed:", e?.message || "Unknown error");
@@ -241,13 +245,21 @@ async function startServer() {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive'
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
     });
 
-    if (!conversation_id) res.write(`data: ${JSON.stringify({ type: 'conversation_id', id: convId })}\n\n`);
+    if (!conversation_id) {
+       res.write(`data: ${JSON.stringify({ type: 'conversation_id', id: convId })}\n\n`);
+       (res as any).flush?.();
+    }
 
     const startTime = Date.now();
     let finalAnswer = "";
+    let chunksUsed: any[] = [];
+    let contextChunksText = "";
+    let confidence = 0.9;
+    let rewritten = message;
     
     try {
       const intent = await detectIntent(message);
@@ -269,12 +281,8 @@ async function startServer() {
       if (cached) {
          finalAnswer = cached;
          res.write(`data: ${JSON.stringify({ type: 'token', content: finalAnswer })}\n\n`);
+         (res as any).flush?.();
       } else {
-         let contextChunksText = "";
-         let chunksUsed = [];
-         let confidence = 0.9;
-         let rewritten = message;
-         
          if (['knowledge_search', 'general_question'].includes(intent)) {
             rewritten = await rewriteQuery(message, history);
             const searchResult = await searchKnowledge(rewritten);
@@ -292,25 +300,33 @@ async function startServer() {
 
          const contents: any[] = [];
          
-         const [latestSummary] = await db.select().from(import("./src/db/schema.ts").then(m=>m.conversationSummaries) as any /* fallback */).where(eq(import("./src/db/schema.ts").then(m=>m.conversationSummaries.conversationId) as any, convId)).orderBy(desc(import("./src/db/schema.ts").then(m=>m.conversationSummaries.createdAt) as any)).limit(1).catch(() => []);
-         // Actually, I should just import `conversationSummaries` at the top. Let's fix that next tool call. I'll just use raw sql for safety.
-         const summaryRes = await db.execute(sql`SELECT summary FROM conversation_summaries WHERE conversation_id = ${convId} ORDER BY created_at DESC LIMIT 1`);
-         if (summaryRes.length > 0 && summaryRes[0].summary) {
-             contents.push({ role: "model", parts: [{ text: "PREVIOUS CONVERSATION SUMMARY:\n" + summaryRes[0].summary }] });
+         const [latestSummary] = await db.select().from(conversationSummaries)
+            .where(eq(conversationSummaries.conversationId, convId))
+            .orderBy(desc(conversationSummaries.createdAt))
+            .limit(1);
+
+         if (latestSummary && latestSummary.summary) {
+             contents.push({ role: "model", parts: [{ text: "PREVIOUS CONVERSATION SUMMARY:\n" + latestSummary.summary }] });
          }
 
-         // Add history from db
-         const rawHistory = await db.execute(sql`SELECT * FROM messages WHERE conversation_id = ${convId} AND id != ${userMsg.id} ORDER BY created_at DESC LIMIT 8`);
-         rawHistory.reverse();
+         // Add history from db using Drizzle
+         const messageRows = await db.select()
+            .from(messages)
+            .where(sql`${messages.conversationId} = ${convId} AND ${messages.id} != ${userMsg.id}`)
+            .orderBy(desc(messages.createdAt))
+            .limit(MAX_HISTORY_MESSAGES);
+         
+         messageRows.reverse();
 
-         for (const h of rawHistory) {
+         for (const h of messageRows) {
              let hParts: any[] = [{ text: h.content || "" }];
-             const hAtts = await db.execute(sql`SELECT * FROM attachments WHERE message_id = ${h.id}`);
-             for (const att of hAtts) {
-                 if (att.is_image || att.mime_type === 'application/pdf') {
+             const attachmentRows = await db.select().from(attachments).where(eq(attachments.messageId, h.id));
+             
+             for (const att of attachmentRows) {
+                 if (att.isImage || att.mimeType === 'application/pdf') {
                     try {
-                      const base64Img = fs.readFileSync(att.storage_path, 'base64');
-                      hParts.push({ inlineData: { mimeType: att.mime_type, data: base64Img } });
+                      const base64Img = fs.readFileSync(att.storagePath, 'base64');
+                      hParts.push({ inlineData: { mimeType: att.mimeType, data: base64Img } });
                     } catch(e) {}
                  }
              }
@@ -345,7 +361,7 @@ async function startServer() {
          contents.push({ role: "user", parts: parts });
 
          const ai = getGenAI();
-         const responseStream = await withRetry(() => ai.models.generateContentStream({
+         const responseStream = await withRetry<any>(() => ai.models.generateContentStream({
              model: CHAT_MODEL,
              contents: contents,
              config: {
@@ -358,18 +374,22 @@ async function startServer() {
             if (text) {
                finalAnswer += text;
                res.write(`data: ${JSON.stringify({ type: 'token', content: text })}\n\n`);
+               (res as any).flush?.();
             }
          }
 
-         res.write(`data: ${JSON.stringify({ type: 'meta', confidence, sources: chunksUsed.slice(0, 3).map(c => c.sourceFile) })}\n\n`);
+         res.write(`data: ${JSON.stringify({ type: 'meta', confidence, sources: chunksUsed.slice(0, 3).map((c: any) => c.sourceFile) })}\n\n`);
+         (res as any).flush?.();
 
          // Save to query cache implicitly
          const finalEmbedding = await embedText(message).catch(e => null);
-         await db.insert(queryCache).values({
-            queryText: message,
-            queryEmbedding: finalEmbedding,
-            answer: finalAnswer,
-         });
+         if (finalEmbedding && finalEmbedding.length > 0) {
+            await db.insert(queryCache).values({
+               queryText: message,
+               queryEmbedding: finalEmbedding,
+               answer: finalAnswer,
+            });
+         }
 
          // Log analytics
          await db.insert(retrievalLogs).values({
@@ -377,8 +397,8 @@ async function startServer() {
             query: message,
             rewrittenQuery: rewritten,
             confidence: confidence,
-            responseTimeMs: Date.now() - startTime,
-            chunksUsed: JSON.stringify(chunksUsed)
+            chunksUsed: JSON.stringify(chunksUsed),
+            responseTimeMs: Date.now() - startTime
          });
       }
 
@@ -396,28 +416,49 @@ async function startServer() {
       (async () => {
          try {
              const allMsgsRes = await db.execute(sql`SELECT COUNT(id) as count FROM messages WHERE conversation_id = ${convId}`);
-             const msgCount = parseInt(allMsgsRes[0].count as string);
+             const msgCount = parseInt((allMsgsRes.rows && allMsgsRes.rows[0] ? allMsgsRes.rows[0].count : "0") as string);
              if (msgCount > 12) {
-                 const oldHistory = await db.execute(sql`SELECT * FROM messages WHERE conversation_id = ${convId} ORDER BY created_at ASC LIMIT ${msgCount - 8}`);
+                 const oldHistoryRows = await db.select()
+                     .from(messages)
+                     .where(eq(messages.conversationId, convId))
+                     .orderBy(messages.createdAt)
+                     .limit(msgCount - 8);
+                     
                  const ai = getGenAI();
-                 const oldText = oldHistory.map((m: any) => `${m.role}: ${m.content}`).join('\n');
+                 const oldText = oldHistoryRows.map((m: any) => `${m.role}: ${m.content}`).join('\n');
                  const response = await ai.models.generateContent({
                      model: CHAT_MODEL,
                      contents: `Summarize the key information, context, and user constraints from this older conversation history. Keep it concise but factual.\n\n${oldText}`
                  });
                  const newSummary = (response.text || "").trim();
                  if (newSummary) {
-                     await db.execute(sql`INSERT INTO conversation_summaries (id, conversation_id, summary) VALUES (${uuidv4()}, ${convId}, ${newSummary})`);
+                     await db.insert(conversationSummaries).values({
+                         conversationId: convId,
+                         summary: newSummary
+                     });
                  }
              }
          } catch(e) { console.warn("Summary failed", e); }
       })();
 
       res.write(`data: ${JSON.stringify({ type: 'done', message_id: asstMsg.id })}\n\n`);
+      (res as any).flush?.();
     } catch (error: any) {
       console.warn("Chat stream error:", error.message || error);
-      res.write(`data: ${JSON.stringify({ type: 'token', content: "\\n[Connection lost, or API rate limit exceeded. Please try again.]" })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'done', message_id: null })}\n\n`);
+      if (!finalAnswer) {
+          finalAnswer = "[Connection lost, or API rate limit exceeded. Please try again.]";
+      }
+      res.write(`data: ${JSON.stringify({ type: 'token', content: "\\n\\n[Connection lost, or API rate limit exceeded. Please try again.]" })}\n\n`);
+      (res as any).flush?.();
+      
+      const [asstMsg] = await db.insert(messages).values({
+        conversationId: convId,
+        role: "assistant",
+        content: finalAnswer
+      }).returning();
+      
+      res.write(`data: ${JSON.stringify({ type: 'done', message_id: asstMsg.id })}\n\n`);
+      (res as any).flush?.();
     }
     
     res.end();
