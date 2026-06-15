@@ -105,7 +105,7 @@ try {
 }
 
   const app = express();
-  const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
   app.use(cors({
     origin: 'http://localhost:5173',
@@ -115,8 +115,11 @@ try {
   app.use(express.json());
 
   // Wait for indexing
-  indexKnowledgeBase().catch(e => console.info("Indexing failed:", e));
-
+if (process.env.NODE_ENV !== "production") {
+  indexKnowledgeBase().catch(e =>
+    console.info("Indexing failed:", e)
+  );
+}
   // Cleanup orphaned attachments older than 1 day
   setInterval(async () => {
      try {
@@ -620,9 +623,9 @@ Query: ${message}`
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
 }
 
 startServer();
