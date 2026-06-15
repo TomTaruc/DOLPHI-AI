@@ -7,6 +7,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 const sql = postgres(process.env.DATABASE_URL, {
+  ssl: 'require',
   max: 5,
   prepare: false,
 });
@@ -18,14 +19,9 @@ export const db = drizzle(sql, {
 });
 
 export async function initDb() {
-  try {
-    console.log('Connecting to Supabase PostgreSQL...');
+  console.log('Connecting to Supabase PostgreSQL...');
 
-    await sql`SELECT 1`;
+  await sql`SELECT 1`;
 
-    console.log('Supabase connection successful');
-  } catch (error) {
-    console.error('Database initialization failed:', error);
-    throw error;
-  }
+  console.log('Supabase connection successful');
 }
