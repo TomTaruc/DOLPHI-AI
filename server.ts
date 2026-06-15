@@ -1,3 +1,11 @@
+import 'dotenv/config';
+
+console.log("=== ENV CHECK ===");
+console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
+console.log("SUPABASE_ANON_KEY:", !!process.env.SUPABASE_ANON_KEY);
+console.log("GEMINI_API_KEY:", !!process.env.GEMINI_API_KEY);
+console.log("=================");
+
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -80,12 +88,21 @@ async function startServer() {
     process.exit(1);
   });
   
-  try {
-    await initDb();
-  } catch(e) {
-    fs.writeFileSync('server-crash.log', 'initDb failed: ' + e.stack);
-    process.exit(1);
-  }
+try {
+  console.log("Starting initDb...");
+  await initDb();
+  console.log("initDb success");
+} catch (e) {
+  console.error("initDb FAILED:");
+  console.error(e);
+
+  fs.writeFileSync(
+    "server-crash.log",
+    "initDb failed:\n" + String(e?.stack || e)
+  );
+
+  process.exit(1);
+}
 
   const app = express();
   const PORT = 3000;

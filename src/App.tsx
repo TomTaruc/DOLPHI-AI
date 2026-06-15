@@ -158,8 +158,7 @@ export default function App() {
   }
 
   return (
-    <div className="w-full flex h-[100dvh] bg-background text-foreground overflow-hidden">
-      <Sidebar 
+<div className="w-full flex h-[100dvh] bg-background text-foreground overflow-x-hidden">      <Sidebar 
         conversations={conversations} 
         currentConvId={currentConvId} 
         onSelect={(id: string) => { setCurrentConvId(id); setSidebarOpen(false); }} 

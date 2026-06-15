@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
-import { Settings, LogOut, User as UserIcon } from 'lucide-react';
+import { Settings, LogOut, User as UserIcon, AlertTriangle } from 'lucide-react';
 
 export function UserProfile() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  
+
   const user = auth.currentUser;
 
   useEffect(() => {
@@ -16,21 +17,25 @@ export function UserProfile() {
         setMenuOpen(false);
       }
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && showSignOutConfirm) {
+      if (event.key === 'Escape') {
         setShowSignOutConfirm(false);
       }
     }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [showSignOutConfirm]);
 
-  const handleModalClickOutside = (e: React.MouseEvent<HTMLDivElement>) => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleModalClickOutside = (
+    e: React.MouseEvent<HTMLDivElement>
+  ) => {
     if (e.target === e.currentTarget) {
       setShowSignOutConfirm(false);
     }
@@ -42,7 +47,7 @@ export function UserProfile() {
     try {
       await signOut(auth);
     } catch (error) {
-      console.error("Error signing out:", error);
+      console.error('Error signing out:', error);
     }
   };
 
@@ -51,51 +56,78 @@ export function UserProfile() {
 
   return (
     <>
-      <div className="relative mt-auto pt-2 pb-4 px-3 border-t border-white/10" ref={menuRef}>
-        <div 
+      <div
+        className="relative mt-auto pt-2 pb-4 px-3 border-t border-white/10"
+        ref={menuRef}
+      >
+        <div
           className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/10 cursor-pointer transition-colors group"
           onClick={() => setMenuOpen(!menuOpen)}
         >
           <div className="w-8 h-8 rounded bg-brand-accent flex items-center justify-center text-brand-primary font-bold shadow-sm shrink-0">
             {user.photoURL ? (
-              <img src={user.photoURL} alt={displayName} className="w-full h-full rounded" />
+              <img
+                src={user.photoURL}
+                alt={displayName}
+                className="w-full h-full rounded object-cover"
+              />
             ) : (
               initial
             )}
           </div>
+
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">{displayName}</p>
-            <p className="text-[11px] text-white/50 truncate w-full">{user.email}</p>
+            <p className="text-sm font-medium text-white truncate">
+              {displayName}
+            </p>
+            <p className="text-[11px] text-white/50 truncate">
+              {user.email}
+            </p>
           </div>
         </div>
 
         {menuOpen && (
-          <div className="absolute bottom-full left-3 w-56 mb-2 bg-white rounded-lg shadow-lg border border-brand-border py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
-            <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-3">
-               <div className="w-8 h-8 rounded bg-brand-primary flex items-center justify-center text-brand-accent font-bold text-sm shrink-0">
-                 {user.photoURL ? (
-                    <img src={user.photoURL} alt={displayName} className="w-full h-full rounded object-cover" />
-                  ) : (
-                    initial
-                  )}
-               </div>
-               <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{displayName}</p>
-                  <p className="text-[11px] text-gray-500 truncate">{user.email}</p>
-               </div>
+          <div className="absolute bottom-full left-3 w-56 mb-2 bg-white rounded-xl shadow-xl border border-brand-border py-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <div className="px-3 py-3 border-b border-gray-100 flex items-center gap-3">
+              <div className="w-8 h-8 rounded bg-brand-primary flex items-center justify-center text-brand-accent font-bold text-sm shrink-0">
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={displayName}
+                    className="w-full h-full rounded object-cover"
+                  />
+                ) : (
+                  initial
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">
+                  {displayName}
+                </p>
+                <p className="text-[11px] text-gray-500 truncate">
+                  {user.email}
+                </p>
+              </div>
             </div>
-            
+
             <button className="w-full flex items-center px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left mt-1">
               <UserIcon size={16} className="mr-2 text-gray-400" />
               My Profile
             </button>
+
             <button className="w-full flex items-center px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left">
               <Settings size={16} className="mr-2 text-gray-400" />
               Settings
             </button>
+
             <div className="h-px bg-gray-100 my-1"></div>
-            <button 
-              onClick={() => { setMenuOpen(false); setShowSignOutConfirm(true); }}
+
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setShowSignOutConfirm(true);
+              }}
               className="w-full flex items-center px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors text-left"
             >
               <LogOut size={16} className="mr-2 text-red-500" />
@@ -105,38 +137,59 @@ export function UserProfile() {
         )}
       </div>
 
-      {showSignOutConfirm && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={handleModalClickOutside}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title"
-        >
-          <div className="bg-white rounded-xl shadow-2xl w-[320px] p-6 animate-in zoom-in-95 duration-200">
-            <h3 id="modal-title" className="text-lg font-bold text-gray-900 mb-2">Sign Out?</h3>
-            <p className="text-sm text-gray-500 mb-6 leading-relaxed">Are you sure you want to sign out of DOLPHI?</p>
-            <div className="flex items-center justify-end gap-3 mt-2">
-               <button 
-                 onClick={() => setShowSignOutConfirm(false)}
-                 className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors focus:ring-2 focus:ring-gray-200 focus:outline-none"
-               >
-                 Cancel
-               </button>
-               <button 
-                 onClick={() => {
-                   setShowSignOutConfirm(false);
-                   handleSignOut();
-                 }}
-                 autoFocus
-                 className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:outline-none"
-               >
-                 Sign Out
-               </button>
+      {showSignOutConfirm &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={handleModalClickOutside}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-title"
+          >
+            <div
+              className="bg-white rounded-2xl shadow-2xl w-[400px] max-w-[90vw] p-6 animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-center mb-4">
+                <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center">
+                  <AlertTriangle className="w-7 h-7 text-red-600" />
+                </div>
+              </div>
+
+              <h3
+                id="modal-title"
+                className="text-xl font-semibold text-center text-gray-900"
+              >
+                Sign Out
+              </h3>
+
+              <p className="text-sm text-gray-500 text-center mt-3 leading-relaxed">
+                Are you sure you want to sign out of DOLPHI?
+              </p>
+
+              <div className="flex gap-3 mt-8">
+                <button
+                  onClick={() => setShowSignOutConfirm(false)}
+                  className="flex-1 px-4 py-3 rounded-xl border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={() => {
+                    setShowSignOutConfirm(false);
+                    handleSignOut();
+                  }}
+                  autoFocus
+                  className="flex-1 px-4 py-3 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 transition-colors shadow-sm"
+                >
+                  Sign Out
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 }

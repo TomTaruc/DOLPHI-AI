@@ -1,8 +1,26 @@
+# Dependencies
 node_modules/
+
+# Build output
 build/
 dist/
 coverage/
-.DS_Store
-*.log
+
+# Environment variables
 .env*
 !.env.example
+
+# Local database
+data/
+
+# Knowledge base files
+knowledge/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+uploads/
