@@ -1,47 +1,13 @@
-import { drizzle } from 'drizzle-orm/pglite';
-import { PGlite } from '@electric-sql/pglite';
-import { vector } from '@electric-sql/pglite-pgvector';
-import { migrate } from 'drizzle-orm/pglite/migrator';
 import * as schema from './schema.ts';
-import fs from 'fs';
-import path from 'path';
 
-const dataDir = path.join(process.cwd(), 'data');
+// Temporary Render deployment test.
+// This disables PGlite completely so we can determine
+// whether the Render crash is being caused by database startup.
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-console.log('DATA DIR:', dataDir);
-
-export const client = new PGlite(
-  path.join(dataDir, 'db'),
-  {
-    extensions: {
-      vector,
-    },
-  }
-);
-
-export const db = drizzle(client, { schema });
+export const client = {} as any;
+export const db = {} as any;
 
 export async function initDb() {
-  console.log('Testing PGlite startup...');
-
-  try {
-    await client.query(
-      `CREATE EXTENSION IF NOT EXISTS vector;`
-    );
-
-    console.log('Vector extension loaded');
-
-    await migrate(db, {
-      migrationsFolder: './drizzle',
-    });
-
-    console.log('Migrations complete');
-  } catch (error) {
-    console.error('Database initialization failed:', error);
-    throw error;
-  }
+  console.log('SKIPPING DB INIT FOR RENDER TEST');
+  return;
 }
