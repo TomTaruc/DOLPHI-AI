@@ -2,9 +2,34 @@ import fs from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
-import * as _pdfParse from 'pdf-parse';
-const PDFParse = (_pdfParse as any).default || (_pdfParse as any).PDFParse || _pdfParse;
+import * as pdfParseModule from 'pdf-parse';
+const PDFParseCtor =
+  (pdfParseModule as any).PDFParse ||
+  (pdfParseModule as any).default?.PDFParse;
+
+if (typeof PDFParseCtor !== "function") {
+  throw new Error("pdf-parse PDFParse constructor was not found");
+}
+
 import mammoth from 'mammoth';
+
+async function extractPdfText(filePath: string): Promise<string> {
+  const dataBuffer = fs.readFileSync(filePath);
+  let pdf: any = null;
+
+  try {
+    pdf = new PDFParseCtor({ data: new Uint8Array(dataBuffer) } as any);
+    const result = await pdf.getText();
+    return result.text || "";
+  } catch (err: any) {
+    console.warn(`[KNOWLEDGE] PDF parse failed for "${path.basename(filePath)}": ${err?.message || err}`);
+    return "";
+  } finally {
+    try {
+      await pdf?.destroy?.();
+    } catch {}
+  }
+}
 
 /**
  * Extract text content from a supported file.
@@ -13,22 +38,7 @@ import mammoth from 'mammoth';
  */
 export async function extractText(filePath: string, ext: string): Promise<string | null> {
   if (ext === '.pdf') {
-    // Read as binary buffer — do NOT read PDFs as UTF-8 text
-    const dataBuffer = fs.readFileSync(filePath);
-    let pdf: any = null;
-
-    try {
-      pdf = new PDFParse({ data: new Uint8Array(dataBuffer) } as any);
-      const result = await pdf.getText();
-      return result.text || "";
-    } catch (err: any) {
-      console.warn(`[KNOWLEDGE] PDF parse failed for "${path.basename(filePath)}": ${err?.message || err}`);
-      return "";
-    } finally {
-      try {
-        await pdf?.destroy?.();
-      } catch {}
-    }
+    return extractPdfText(filePath);
   }
 
   if (ext === '.docx') {

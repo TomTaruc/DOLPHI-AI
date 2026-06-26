@@ -7,6 +7,7 @@
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "check:knowledge": "tsx scripts/check-knowledge.ts",
+    "check:knowledge:prod": "esbuild scripts/check-knowledge.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/check-knowledge.cjs && node dist/check-knowledge.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
