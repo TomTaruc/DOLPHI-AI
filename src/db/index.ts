@@ -41,22 +41,33 @@ export async function initDb() {
     console.error('Failed to cleanup orphan attachments:', err?.message || err);
   }
 
+  const allowVectorReset = process.env.ALLOW_VECTOR_RESET === "true";
+
   try {
     await sql`ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(768)`;
     await sql`ALTER TABLE query_cache ALTER COLUMN query_embedding TYPE vector(768)`;
     console.log('Vector dimensions verified/updated to 768.');
   } catch (err: any) {
-    if (err.message?.includes('cannot cast type') || err.message?.includes('dimension')) {
-      console.warn("Vector dimension mismatch. Deleting old vectors to alter column.");
+    const isDimensionIssue =
+      err.message?.includes("cannot cast type") ||
+      err.message?.includes("dimension");
+
+    if (isDimensionIssue && allowVectorReset) {
+      console.warn("ALLOW_VECTOR_RESET=true. Truncating vector tables to update dimensions.");
       try {
         await sql`TRUNCATE TABLE knowledge_chunks`;
         await sql`TRUNCATE TABLE query_cache`;
         await sql`ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(768)`;
         await sql`ALTER TABLE query_cache ALTER COLUMN query_embedding TYPE vector(768)`;
-        console.log('Vector dimensions updated to 768 via truncation.');
+        console.log("Vector dimensions updated to 768 via truncation.");
       } catch (innerErr: any) {
         console.error('Failed to update vector dimensions even with truncation:', innerErr?.message || innerErr);
       }
+    } else if (isDimensionIssue && !allowVectorReset) {
+      console.error(
+        "Vector dimension migration failed. Set ALLOW_VECTOR_RESET=true only in development if you are okay deleting indexed chunks and cache."
+      );
+      console.error(err?.message || err);
     } else {
       console.error('Failed to run vector dimension migration:', err?.message || err);
     }

@@ -102,7 +102,14 @@ export async function checkSemanticCache(query: string, intent: string, attachme
     if (historyLength > 0) return null; // Context isolation: Only cache zero-shot queries
     
     // Bypass cache for knowledge intents to ensure fresh KB data is fetched
-    const knowledgeIntents = ["knowledge_search", "document_analysis", "summarization", "comparison", "follow_up"];
+    const knowledgeIntents = [
+        "knowledge_search",
+        "general_question",
+        "document_analysis",
+        "summarization",
+        "comparison",
+        "follow_up"
+    ];
     if (knowledgeIntents.includes(intent)) return null;
     
     if (pgVectorFailed) return null;

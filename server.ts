@@ -1,11 +1,17 @@
 import 'dotenv/config';
 
 console.log("=== ENV CHECK ===");
-console.log("SUPABASE_URL:", !!process.env.SUPABASE_URL);
-console.log("SUPABASE_ANON_KEY:", !!process.env.SUPABASE_ANON_KEY);
-console.log("GEMINI_API_KEY:", !!process.env.GEMINI_API_KEY);
-console.log("DATABASE_URL:", !!process.env.DATABASE_URL);
+console.log("DATABASE_URL present:", !!process.env.DATABASE_URL);
+console.log("GEMINI_API_KEY present:", !!process.env.GEMINI_API_KEY);
+console.log("KNOWLEDGE_DIR:", process.env.KNOWLEDGE_DIR || 'knowledge/ (default)');
+console.log("ADMIN_EMAILS configured:", !!process.env.ADMIN_EMAILS);
+console.log("ALLOW_VECTOR_RESET enabled:", process.env.ALLOW_VECTOR_RESET === "true");
 console.log("=================");
+
+if (!process.env.DATABASE_URL) {
+  console.error("FATAL ERROR: DATABASE_URL is missing. Please create a .env file based on .env.example.");
+  process.exit(1);
+}
 
 import express from "express";
 import cors from "cors";
@@ -398,7 +404,14 @@ Query: ${message}`
             });
             const title = response.text?.trim();
             if (title) {
-              await db.update(conversations).set({ title }).where(eq(conversations.id, localConvId));
+              await db.update(conversations)
+                .set({ title })
+                .where(
+                  and(
+                    eq(conversations.id, localConvId),
+                    eq(conversations.userId, req.dbUser!.id)
+                  )
+                );
             }
           } catch (e: any) {
              console.info("Auto-title failed:", e?.message || "Unknown error");
@@ -438,7 +451,12 @@ Query: ${message}`
 
       await db.update(conversations)
         .set({ updatedAt: new Date() })
-        .where(eq(conversations.id, convId));
+        .where(
+          and(
+            eq(conversations.id, convId),
+            eq(conversations.userId, req.dbUser!.id)
+          )
+        );
 
       if (attachment_ids && attachment_ids.length > 0) {
         for (const aid of attachment_ids) {

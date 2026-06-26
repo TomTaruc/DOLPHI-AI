@@ -69,13 +69,19 @@ async function extractText(filePath: string, ext: string): Promise<string | null
   if (ext === '.pdf') {
     // Read as binary buffer — do NOT read PDFs as UTF-8 text
     const dataBuffer = fs.readFileSync(filePath);
+    let pdf: any = null;
+
     try {
-      const pdf = new PDFParse(new Uint8Array(dataBuffer));
+      pdf = new PDFParse({ data: new Uint8Array(dataBuffer) } as any);
       const result = await pdf.getText();
-      return result.text;
+      return result.text || "";
     } catch (err: any) {
-      console.warn(`[KNOWLEDGE] PDF parse failed for ${filePath}: ${err?.message}`);
+      console.warn(`[KNOWLEDGE] PDF parse failed for "${path.basename(filePath)}": ${err?.message || err}`);
       return "";
+    } finally {
+      try {
+        await pdf?.destroy?.();
+      } catch {}
     }
   }
 

@@ -14,7 +14,9 @@ coverage/
 data/
 
 # Knowledge base files
-knowledge/
+knowledge/*
+!knowledge/.gitkeep
+!knowledge/README.md
 
 # Logs
 *.log
