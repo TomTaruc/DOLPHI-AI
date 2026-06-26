@@ -105,7 +105,7 @@ export async function checkSemanticCache(query: string, intent: string, attachme
 
     try {
         const numQueryCacheRowsResult = await db.execute(sql`SELECT count(*) FROM query_cache`);
-        const numRows = parseInt(numQueryCacheRowsResult.rows[0].count as string);
+        const numRows = parseInt((numQueryCacheRowsResult as any).rows[0].count as string);
         if (numRows === 0) return null; // Avoid issue 23
 
         const embedding = await embedText(query);

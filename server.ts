@@ -1,9 +1,10 @@
 import 'dotenv/config';
 
 console.log("=== ENV CHECK ===");
-console.log("SUPABASE_URL:", process.env.SUPABASE_URL);
+console.log("SUPABASE_URL:", !!process.env.SUPABASE_URL);
 console.log("SUPABASE_ANON_KEY:", !!process.env.SUPABASE_ANON_KEY);
 console.log("GEMINI_API_KEY:", !!process.env.GEMINI_API_KEY);
+console.log("DATABASE_URL:", !!process.env.DATABASE_URL);
 console.log("=================");
 
 import express from "express";
@@ -15,7 +16,7 @@ import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { db, initDb } from "./src/db/index.ts";
 import { conversations, messages, attachments, retrievalLogs, queryCache, suggestedPrompts, conversationSummaries } from "./src/db/schema.ts";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { indexKnowledgeBase } from "./src/lib/indexer.ts";
 import { rewriteQuery, detectIntent, checkSemanticCache, verifyAnswer } from "./src/lib/pipeline.ts";
@@ -107,24 +108,35 @@ try {
   const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+  // CORS: allow Vite dev server and production origin
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    process.env.APP_URL
+  ].filter(Boolean) as string[];
   app.use(cors({
-    origin: 'http://localhost:5173',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (server-to-server, same-origin)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, true); // In production, allow all origins since we use auth tokens
+      }
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE']
   }));
 
   app.use(express.json());
 
-  // Wait for indexing
-if (process.env.NODE_ENV !== "production") {
+  // Index knowledge base in ALL environments (dev + production)
   indexKnowledgeBase().catch(e =>
-    console.info("Indexing failed:", e)
+    console.error("[KNOWLEDGE] Indexing failed:", e?.message || e)
   );
-}
   // Cleanup orphaned attachments older than 1 day
   setInterval(async () => {
      try {
         const oldAttsRes = await db.execute(sql`SELECT * FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
-        const oldAttsRows = oldAttsRes.rows || [];
+        const oldAttsRows = (oldAttsRes as any).rows || [];
         for (const att of oldAttsRows) {
            if (fs.existsSync(att.storage_path as string)) {
               fs.unlinkSync(att.storage_path as string);
@@ -151,6 +163,23 @@ if (process.env.NODE_ENV !== "production") {
     }
   });
 
+  // Protected reindex route — triggers Knowledge Base re-indexing
+  app.post("/api/knowledge/reindex", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      // Optional: restrict to admin emails if ADMIN_EMAILS env var is set
+      const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
+      if (adminEmails.length > 0 && !adminEmails.includes(req.dbUser!.email.toLowerCase())) {
+        return res.status(403).json({ error: "Forbidden: admin access required" });
+      }
+      console.log(`[KNOWLEDGE] Reindex triggered by user: ${req.dbUser!.email}`);
+      const summary = await indexKnowledgeBase();
+      res.json({ success: true, summary });
+    } catch (e: any) {
+      console.error("[KNOWLEDGE] Reindex failed:", e?.message || e);
+      res.status(500).json({ error: "Reindexing failed", detail: e?.message });
+    }
+  });
+
   app.get("/api/suggested-prompts", requireAuth, async (req: AuthRequest, res) => {
     try {
       const prompts = await db.select().from(suggestedPrompts).limit(4);
@@ -160,13 +189,22 @@ if (process.env.NODE_ENV !== "production") {
     }
   });
 
+  // Return only the logged-in user's conversations
   app.get("/api/conversations", requireAuth, async (req: AuthRequest, res) => {
     const results = await db.select().from(conversations).where(eq(conversations.userId, req.dbUser!.id)).orderBy(desc(conversations.updatedAt));
     res.json(results);
   });
 
+  // Verify conversation belongs to the logged-in user before returning messages
   app.get("/api/conversations/:id/messages", requireAuth, async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Ownership check
+    const [conv] = await db.select().from(conversations).where(
+      and(eq(conversations.id, id as string), eq(conversations.userId, req.dbUser!.id))
+    );
+    if (!conv) return res.status(404).json({ error: "Conversation not found" });
+
     const msgs = await db.select().from(messages).where(eq(messages.conversationId, id as string)).orderBy(messages.createdAt);
     const resultMessages = [];
     
@@ -184,8 +222,12 @@ if (process.env.NODE_ENV !== "production") {
     });
   });
 
+  // Delete — verify ownership before deleting
   app.delete("/api/conversations/:id", requireAuth, async (req: AuthRequest, res) => {
-    await db.delete(conversations).where(eq(conversations.id, req.params.id));
+    const [deleted] = await db.delete(conversations).where(
+      and(eq(conversations.id, req.params.id), eq(conversations.userId, req.dbUser!.id))
+    ).returning();
+    if (!deleted) return res.status(404).json({ error: "Conversation not found" });
     res.json({ success: true });
   });
 
@@ -218,27 +260,31 @@ if (process.env.NODE_ENV !== "production") {
     });
   });
 
+  // Rename — verify ownership before renaming
   app.put("/api/conversations/:id/title", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { title } = req.body;
       if (!title) return res.status(400).json({ error: "Title required" });
       const [updated] = await db.update(conversations)
         .set({ title, updatedAt: new Date() })
-        .where(eq(conversations.id, req.params.id))
+        .where(and(eq(conversations.id, req.params.id), eq(conversations.userId, req.dbUser!.id)))
         .returning();
+      if (!updated) return res.status(404).json({ error: "Conversation not found" });
       res.json(updated);
     } catch(err) {
       res.status(500).json({ error: "Failed to rename" });
     }
   });
 
+  // Pin — verify ownership before pinning
   app.put("/api/conversations/:id/pin", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { isPinned } = req.body;
       const [updated] = await db.update(conversations)
         .set({ isPinned: !!isPinned, updatedAt: new Date() })
-        .where(eq(conversations.id, req.params.id))
+        .where(and(eq(conversations.id, req.params.id), eq(conversations.userId, req.dbUser!.id)))
         .returning();
+      if (!updated) return res.status(404).json({ error: "Conversation not found" });
       res.json(updated);
     } catch(err) {
       res.status(500).json({ error: "Failed to pin" });
@@ -388,15 +434,18 @@ Query: ${message}`
          }
          console.log(`[TRACE] [STEP 4] Search/Retrieval completed.`);
 
-         let systemPrompt = `You are DOLPHI AI, a helpful, intelligent assistant.`;
+         let systemPrompt = `You are DOLPHI AI, a helpful, intelligent school assistant for Mapua University.`;
 
          if (chunksUsed.length > 0) {
-             systemPrompt += `\n\nRETRIEVED KNOWLEDGE (confidence: ${confidence}):\n${contextChunksText}\n\nINSTRUCTIONS: Answer based on the retrieved knowledge if it contains the answer. If the retrieved knowledge is irrelevant or insufficient, explicitly use your general model knowledge to fully answer the user.`;
-         } else if (attachment_ids && attachment_ids.length > 0) {
-             systemPrompt += `\n\nINSTRUCTIONS: You have been provided with uploaded files. Analyze them carefully and directly answer the user's request based on their contents.`;
-         } else {
-             systemPrompt += `\n\nINSTRUCTIONS: Answer the user's query using your general knowledge and the provided conversation history.`;
-         }
+              // Build source citations from unique filenames
+              const sourceFiles = [...new Set(chunksUsed.map((c: any) => c.sourceFile).filter(Boolean))];
+              const sourceCitation = sourceFiles.length > 0 ? `\nSource documents: ${sourceFiles.join(', ')}` : '';
+              systemPrompt += `\n\nRETRIEVED KNOWLEDGE BASE CONTENT (confidence: ${confidence.toFixed(2)}):${sourceCitation}\n\n${contextChunksText}\n\nINSTRUCTIONS:\n- Answer the user's question based on the retrieved Knowledge Base content above.\n- When your answer uses information from the Knowledge Base, cite the source document name(s).\n- If the retrieved content is clearly relevant and answers the question, base your response on it.\n- If the retrieved content is NOT relevant to the user's question, or does not contain enough information, say: "I couldn't find specific information about this in the school Knowledge Base." Then optionally provide a helpful answer using your general knowledge, clearly marking it as general information.\n- Do NOT invent or fabricate source references.\n- Do NOT pretend unrelated Knowledge Base content answers the question.`;
+          } else if (attachment_ids && attachment_ids.length > 0) {
+              systemPrompt += `\n\nINSTRUCTIONS: You have been provided with uploaded files. Analyze them carefully and directly answer the user's request based on their contents.`;
+          } else {
+              systemPrompt += `\n\nINSTRUCTIONS: Answer the user's query using your general knowledge and the provided conversation history. If the user is asking about school-specific policies, documents, or rules and you don't have that information, let them know that the specific document may not be in the Knowledge Base yet.`;
+          }
 
          const contents: any[] = [];
          
@@ -513,7 +562,17 @@ Query: ${message}`
              throw e; // goes to outer catch
          }
 
-         res.write(`data: ${JSON.stringify({ type: 'meta', confidence, sources: chunksUsed.slice(0, 3).map((c: any) => c.sourceFile) })}\n\n`);
+         // Send enriched metadata including hybrid retrieval info
+         res.write(`data: ${JSON.stringify({ 
+           type: 'meta', 
+           confidence, 
+           sources: [...new Set(chunksUsed.slice(0, 5).map((c: any) => c.sourceFile).filter(Boolean))],
+           retrieval: chunksUsed.slice(0, 3).map((c: any) => ({
+             sourceFile: c.sourceFile,
+             hybridScore: c.hybridScore,
+             matchMethod: c.matchMethod
+           }))
+         })}\n\n`);
          (res as any).flush?.();
 
          // Save to query cache implicitly
@@ -554,7 +613,7 @@ Query: ${message}`
       (async () => {
          try {
              const allMsgsRes = await db.execute(sql`SELECT COUNT(id) as count FROM messages WHERE conversation_id = ${convId}`);
-             const msgCount = parseInt((allMsgsRes.rows && allMsgsRes.rows[0] ? allMsgsRes.rows[0].count : "0") as string);
+             const msgCount = parseInt(((allMsgsRes as any).rows && (allMsgsRes as any).rows[0] ? (allMsgsRes as any).rows[0].count : "0") as string);
              if (msgCount > 12) {
                  const oldHistoryRows = await db.select()
                      .from(messages)
