@@ -116,14 +116,17 @@ const PORT = Number(process.env.PORT) || 3000;
   ].filter(Boolean) as string[];
   app.use(cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (server-to-server, same-origin)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, true); // In production, allow all origins since we use auth tokens
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
       }
+      
+      console.warn(`[CORS] Blocked origin: ${origin}`);
+      return callback(new Error("Not allowed by CORS"));
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE']
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
   }));
 
   app.use(express.json());
@@ -167,8 +170,11 @@ const PORT = Number(process.env.PORT) || 3000;
   app.post("/api/knowledge/reindex", requireAuth, async (req: AuthRequest, res) => {
     try {
       // Optional: restrict to admin emails if ADMIN_EMAILS env var is set
-      const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()) || [];
-      if (adminEmails.length > 0 && !adminEmails.includes(req.dbUser!.email.toLowerCase())) {
+      const adminEmails = process.env.ADMIN_EMAILS?.split(',').map(e => e.trim().toLowerCase()).filter(Boolean) || [];
+      if (adminEmails.length === 0) {
+        return res.status(403).json({ error: "Knowledge Base reindexing is disabled because ADMIN_EMAILS is not configured" });
+      }
+      if (!adminEmails.includes(req.dbUser!.email.toLowerCase())) {
         return res.status(403).json({ error: "Forbidden: admin access required" });
       }
       console.log(`[KNOWLEDGE] Reindex triggered by user: ${req.dbUser!.email}`);
@@ -242,6 +248,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
     const [att] = await db.insert(attachments).values({
       conversationId: convId, // Dummy if unbound yet, handled later
+      userId: req.dbUser!.id,
       originalName: originalname,
       storedName: path.basename(filepath),
       mimeType: mimetype,
@@ -295,6 +302,10 @@ const PORT = Number(process.env.PORT) || 3000;
     const [att] = await db.select().from(attachments).where(eq(attachments.id, req.params.id));
     if (!att) return res.status(404).json({ error: "Not found" });
     
+    if (att.userId && att.userId !== req.dbUser!.id) {
+       return res.status(403).json({ error: "Forbidden" });
+    }
+    
     if (att.conversationId) {
       const [conv] = await db.select().from(conversations).where(eq(conversations.id, att.conversationId));
       if (conv && conv.userId !== req.dbUser!.id) return res.status(403).json({ error: "Forbidden" });
@@ -309,9 +320,20 @@ const PORT = Number(process.env.PORT) || 3000;
   app.post("/api/chat/stream", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { message, conversation_id, attachment_ids, history } = req.body;
+      const safeHistory = Array.isArray(history) ? history : [];
       let convId = conversation_id;
 
-      if (!convId) {
+      if (convId) {
+        const [ownedConversation] = await db
+          .select()
+          .from(conversations)
+          .where(and(eq(conversations.id, convId), eq(conversations.userId, req.dbUser!.id)))
+          .limit(1);
+
+        if (!ownedConversation) {
+          return res.status(404).json({ error: "Conversation not found" });
+        }
+      } else {
         const [conv] = await db.insert(conversations).values({
           userId: req.dbUser!.id,
           title: message.slice(0, 40)
@@ -321,7 +343,7 @@ const PORT = Number(process.env.PORT) || 3000;
         // Update attachments that were uploaded before the conv existed
         if (attachment_ids?.length) {
            for (const aid of attachment_ids) {
-              await db.execute(sql`UPDATE attachments SET conversation_id = ${convId} WHERE id = ${aid}`);
+              await db.execute(sql`UPDATE attachments SET conversation_id = ${convId} WHERE id = ${aid} AND user_id = ${req.dbUser!.id}`);
            }
         }
 
@@ -397,17 +419,17 @@ Query: ${message}`
 
       if (attachment_ids && attachment_ids.length > 0) {
         for (const aid of attachment_ids) {
-           await db.execute(sql`UPDATE attachments SET message_id = ${userMsg.id} WHERE id = ${aid}`);
+           await db.execute(sql`UPDATE attachments SET message_id = ${userMsg.id} WHERE id = ${aid} AND user_id = ${req.dbUser!.id}`);
         }
       }
 
       // Check cache
       // --- CRITICAL FIX 3A: Bypass cache if there is conversation history ---
-      const isFreshQuery = !history || history.length === 0;
+      const isFreshQuery = !safeHistory || safeHistory.length === 0;
       const hasNoAttachments = !attachment_ids || attachment_ids.length === 0;
       
       const cached = (isFreshQuery && hasNoAttachments) 
-          ? await checkSemanticCache(message, intent, attachment_ids, history.length) 
+          ? await checkSemanticCache(message, intent, attachment_ids, safeHistory.length) 
           : null;
       // ----------------------------------------------------------------------
       console.log(`[STREAM] Cache check done | hit=${!!cached}`);
@@ -420,17 +442,27 @@ Query: ${message}`
          const hasAttachments = attachment_ids && attachment_ids.length > 0;
 
          console.log(`[TRACE] [STEP 3] Search/Retrieval started.`);
-         if (!hasAttachments && ['knowledge_search', 'general_question'].includes(intent)) {
-            rewritten = await rewriteQuery(message, history);
+         const knowledgeIntents = ["knowledge_search", "general_question", "document_analysis", "summarization", "comparison", "follow_up"];
+         if (!hasAttachments && knowledgeIntents.includes(intent)) {
+            rewritten = await rewriteQuery(message, safeHistory);
             const searchResult = await searchKnowledge(rewritten);
             chunksUsed = searchResult.results;
             
             if (searchResult.error || chunksUsed.length === 0) {
                confidence = 0.0;
             } else {
-               confidence = chunksUsed[0].similarity || 0;
+               confidence = chunksUsed[0]?.hybridScore ?? chunksUsed[0]?.semanticScore ?? chunksUsed[0]?.bm25Score ?? 0;
             }
-            contextChunksText = chunksUsed.map((c: any) => c.content).join('\n\n');
+            contextChunksText = chunksUsed.map((c: any, idx: number) => {
+               return [
+                 `[Source ${idx + 1}]`,
+                 `File: ${c.sourceFile}`,
+                 `Chunk: ${c.chunkIndex}`,
+                 `Hybrid Score: ${typeof c.hybridScore === "number" ? c.hybridScore.toFixed(3) : "n/a"}`,
+                 `Content:`,
+                 c.content
+               ].join("\n");
+            }).join("\n\n---\n\n");
          }
          console.log(`[TRACE] [STEP 4] Search/Retrieval completed.`);
 
@@ -579,7 +611,7 @@ Query: ${message}`
          const finalEmbedding = await embedText(message).catch(e => null);
          
          // --- CRITICAL FIX 3B: ONLY save zero-shot global queries to the cache ---
-         if (isFreshQuery && hasNoAttachments && finalEmbedding && finalEmbedding.length > 0) {
+         if (isFreshQuery && hasNoAttachments && finalEmbedding && finalEmbedding.length > 0 && !knowledgeIntents.includes(intent)) {
             await db.insert(queryCache).values({
                queryText: message,
                queryEmbedding: finalEmbedding,
@@ -642,9 +674,9 @@ Query: ${message}`
     } catch (error: any) {
       console.info("Chat stream error:", error.message || error);
       if (!finalAnswer) {
-          finalAnswer = "I'm having trouble thinking right now. Please try your request again.";
+          finalAnswer = "I encountered an error generating the response.";
       }
-      res.write(`data: ${JSON.stringify({ type: 'token', content: "\\n\\nI'm having trouble thinking right now. Please try your request again." })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'token', content: "\\n\\nI encountered an error generating the response." })}\n\n`);
       (res as any).flush?.();
       
       const [asstMsg] = await db.insert(messages).values({

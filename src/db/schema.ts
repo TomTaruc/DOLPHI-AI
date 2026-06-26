@@ -64,6 +64,7 @@ export const attachments = pgTable('attachments', {
   messageId: uuid('message_id').references(() => messages.id, { onDelete: 'cascade' }),
   conversationId: uuid('conversation_id')
     .references(() => conversations.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id),
   originalName: text('original_name').notNull(),
   storedName: text('stored_name').notNull(),
   mimeType: text('mime_type').notNull(),

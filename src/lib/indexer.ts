@@ -8,7 +8,8 @@ import { eq } from 'drizzle-orm';
 import { CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_BATCH_SIZE } from './constants.ts';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
-import { PDFParse } from 'pdf-parse';
+import * as _pdfParse from 'pdf-parse';
+const pdfParse = (_pdfParse as any).default || _pdfParse;
 import mammoth from 'mammoth';
 
 const KNOWLEDGE_DIR =
@@ -68,13 +69,8 @@ async function extractText(filePath: string, ext: string): Promise<string | null
   if (ext === '.pdf') {
     // Read as binary buffer — do NOT read PDFs as UTF-8 text
     const dataBuffer = fs.readFileSync(filePath);
-    const parser: any = new PDFParse({ verbosity: 0, data: new Uint8Array(dataBuffer) });
-    await parser.load();
-    const result = await parser.getText();
-    // Concatenate text from all pages
-    const text = result.pages.map((pg: any) => pg.text).join('\n');
-    await parser.destroy();
-    return text;
+    const result = await pdfParse(dataBuffer);
+    return result.text;
   }
 
   if (ext === '.docx') {
@@ -209,16 +205,18 @@ export async function indexKnowledgeBase() {
         continue;
       }
 
-      // Delete old chunks for this source file before re-indexing
-      await db
-        .delete(knowledgeChunks)
-        .where(eq(knowledgeChunks.sourceFile, file));
-
       // Chunk the extracted text
       const chunks = chunkText(trimmed);
       let fileChunksInserted = 0;
 
       // Generate embeddings in safe batches
+      const allValues: Array<{
+        sourceFile: string;
+        chunkIndex: number;
+        content: string;
+        embedding: number[];
+      }> = [];
+
       for (let i = 0; i < chunks.length; i += EMBEDDING_BATCH_SIZE) {
         const batchChunks = chunks.slice(i, i + EMBEDDING_BATCH_SIZE);
 
@@ -242,11 +240,25 @@ export async function indexKnowledgeBase() {
           .filter((val) => val.embedding.length > 0);
 
         if (values.length > 0) {
-          await db.insert(knowledgeChunks).values(values);
-          fileChunksInserted += values.length;
+          allValues.push(...values);
         }
       }
 
+      if (allValues.length === 0) {
+        filesFailed++;
+        failedFiles.push(`${file} (no chunks inserted)`);
+        console.warn(`[KNOWLEDGE] ✗ No chunks inserted for "${file}". Not marking as indexed.`);
+        continue;
+      }
+
+      // Delete old chunks for this source file ONLY after embeddings are ready
+      await db
+        .delete(knowledgeChunks)
+        .where(eq(knowledgeChunks.sourceFile, file));
+
+      // Insert the new chunks
+      await db.insert(knowledgeChunks).values(allValues);
+      fileChunksInserted = allValues.length;
       totalChunksInserted += fileChunksInserted;
 
       // Update source metadata with the new hash
