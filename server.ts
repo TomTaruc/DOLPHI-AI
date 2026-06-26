@@ -130,7 +130,7 @@ const PORT = Number(process.env.PORT) || 3000;
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
       
-      if (allowedOrigins.includes(origin)) {
+      if (allowedOrigins.includes(origin) || origin.endsWith('.onrender.com')) {
         return callback(null, true);
       }
       
