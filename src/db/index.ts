@@ -2,14 +2,16 @@ import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema.ts';
 
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    'DATABASE_URL is missing. Create a .env file based on .env.example and set DATABASE_URL to your Supabase PostgreSQL connection string.'
+  );
+}
+
 console.log(
   'DATABASE_URL_HOST:',
-  process.env.DATABASE_URL?.replace(/:\/\/.*@/, '://***@')
+  process.env.DATABASE_URL.replace(/:\/\/.*@/, '://***@')
 );
-
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is not set');
-}
 
 const sql = postgres(process.env.DATABASE_URL, {
   ssl: 'require',
