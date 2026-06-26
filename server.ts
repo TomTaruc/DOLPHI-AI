@@ -109,10 +109,16 @@ try {
 const PORT = Number(process.env.PORT) || 3000;
 
   // CORS: allow Vite dev server and production origin
+  const envAllowedOrigins = process.env.ALLOWED_ORIGINS
+    ?.split(",")
+    .map(o => o.trim())
+    .filter(Boolean) || [];
+
   const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:3000',
-    process.env.APP_URL
+    process.env.APP_URL,
+    ...envAllowedOrigins
   ].filter(Boolean) as string[];
   app.use(cors({
     origin: (origin, callback) => {
@@ -138,14 +144,14 @@ const PORT = Number(process.env.PORT) || 3000;
   // Cleanup orphaned attachments older than 1 day
   setInterval(async () => {
      try {
-        const oldAttsRes = await db.execute(sql`SELECT * FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
+        const oldAttsRes = await db.execute(sql`SELECT * FROM attachments WHERE user_id IS NULL AND conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
         const oldAttsRows = (oldAttsRes as any).rows || [];
         for (const att of oldAttsRows) {
            if (fs.existsSync(att.storage_path as string)) {
               fs.unlinkSync(att.storage_path as string);
            }
         }
-        await db.execute(sql`DELETE FROM attachments WHERE conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
+        await db.execute(sql`DELETE FROM attachments WHERE user_id IS NULL AND conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`);
      } catch(e) {}
   }, 1000 * 60 * 60 * 12); // run every 12 hours
 
@@ -215,7 +221,7 @@ const PORT = Number(process.env.PORT) || 3000;
     const resultMessages = [];
     
     for (const msg of msgs) {
-       const atts = await db.select().from(attachments).where(eq(attachments.messageId, msg.id));
+       const atts = await db.select().from(attachments).where(and(eq(attachments.messageId, msg.id), eq(attachments.userId, req.dbUser!.id)));
        resultMessages.push({
          ...msg,
          attachments: atts
@@ -245,6 +251,23 @@ const PORT = Number(process.env.PORT) || 3000;
     // Create attachment record early
     let convId = req.body.conversation_id;
     if (convId === "null" || !convId) convId = null;
+
+    if (convId) {
+      const [ownedConversation] = await db
+        .select()
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.id, convId),
+            eq(conversations.userId, req.dbUser!.id)
+          )
+        )
+        .limit(1);
+
+      if (!ownedConversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+    }
 
     const [att] = await db.insert(attachments).values({
       conversationId: convId, // Dummy if unbound yet, handled later
@@ -299,10 +322,10 @@ const PORT = Number(process.env.PORT) || 3000;
   });
 
   app.get("/api/files/:id", requireAuth, async (req: AuthRequest, res) => {
-    const [att] = await db.select().from(attachments).where(eq(attachments.id, req.params.id));
+    const [att] = await db.select().from(attachments).where(and(eq(attachments.id, req.params.id), eq(attachments.userId, req.dbUser!.id)));
     if (!att) return res.status(404).json({ error: "Not found" });
     
-    if (att.userId && att.userId !== req.dbUser!.id) {
+    if (!att.userId || att.userId !== req.dbUser!.id) {
        return res.status(403).json({ error: "Forbidden" });
     }
     
@@ -464,6 +487,8 @@ Query: ${message}`
                ].join("\n");
             }).join("\n\n---\n\n");
          }
+         const topSources = [...new Set(chunksUsed.map((c: any) => c.sourceFile).filter(Boolean))].join(', ');
+         console.log(`[RETRIEVAL] intent=${intent} query="${rewritten}" chunks=${chunksUsed.length} topScore=${confidence.toFixed(3)} sources=${topSources}`);
          console.log(`[TRACE] [STEP 4] Search/Retrieval completed.`);
 
          let systemPrompt = `You are DOLPHI AI, a helpful, intelligent school assistant for Mapua University.`;
@@ -502,7 +527,7 @@ Query: ${message}`
 
          for (const h of messageRows) {
              let hParts: any[] = [{ text: h.content || "" }];
-             const attachmentRows = await db.select().from(attachments).where(eq(attachments.messageId, h.id));
+             const attachmentRows = await db.select().from(attachments).where(and(eq(attachments.messageId, h.id), eq(attachments.userId, req.dbUser!.id)));
              
              for (const att of attachmentRows) {
                  if (att.isImage || att.mimeType === 'application/pdf') {
@@ -522,7 +547,7 @@ Query: ${message}`
 
          if (attachment_ids && attachment_ids.length > 0) {
             for (const aid of attachment_ids) {
-               const [att] = await db.select().from(attachments).where(eq(attachments.id, aid));
+               const [att] = await db.select().from(attachments).where(and(eq(attachments.id, aid), eq(attachments.userId, req.dbUser!.id)));
                if (att) {
                   if (att.isImage || att.mimeType === 'application/pdf') {
                      const base64Img = fs.readFileSync(att.storagePath, 'base64');

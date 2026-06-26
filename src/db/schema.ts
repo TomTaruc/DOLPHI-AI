@@ -81,7 +81,7 @@ export const knowledgeChunks = pgTable('knowledge_chunks', {
   sourceFile: text('source_file').notNull(),
   chunkIndex: integer('chunk_index').notNull(),
   content: text('content').notNull(),
-  embedding: vectorType('embedding'), // VECTOR(384)
+  embedding: vectorType('embedding'), // VECTOR(768)
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

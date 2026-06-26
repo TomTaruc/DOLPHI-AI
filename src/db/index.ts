@@ -33,4 +33,32 @@ export async function initDb() {
   } catch (err: any) {
     console.error('Failed to run attachment ownership migration:', err?.message || err);
   }
+
+  try {
+    await sql`DELETE FROM attachments WHERE user_id IS NULL AND conversation_id IS NULL AND created_at < NOW() - INTERVAL '1 day'`;
+    console.log('Orphan attachment cleanup completed.');
+  } catch (err: any) {
+    console.error('Failed to cleanup orphan attachments:', err?.message || err);
+  }
+
+  try {
+    await sql`ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(768)`;
+    await sql`ALTER TABLE query_cache ALTER COLUMN query_embedding TYPE vector(768)`;
+    console.log('Vector dimensions verified/updated to 768.');
+  } catch (err: any) {
+    if (err.message?.includes('cannot cast type') || err.message?.includes('dimension')) {
+      console.warn("Vector dimension mismatch. Deleting old vectors to alter column.");
+      try {
+        await sql`TRUNCATE TABLE knowledge_chunks`;
+        await sql`TRUNCATE TABLE query_cache`;
+        await sql`ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(768)`;
+        await sql`ALTER TABLE query_cache ALTER COLUMN query_embedding TYPE vector(768)`;
+        console.log('Vector dimensions updated to 768 via truncation.');
+      } catch (innerErr: any) {
+        console.error('Failed to update vector dimensions even with truncation:', innerErr?.message || innerErr);
+      }
+    } else {
+      console.error('Failed to run vector dimension migration:', err?.message || err);
+    }
+  }
 }

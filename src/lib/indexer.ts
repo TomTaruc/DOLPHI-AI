@@ -4,12 +4,12 @@ import { db } from '../db/index.ts';
 import { knowledgeChunks, sourceMetadata } from '../db/schema.ts';
 import { embedBatch } from './retriever.ts';
 import crypto from 'crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_BATCH_SIZE } from './constants.ts';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
 import * as _pdfParse from 'pdf-parse';
-const pdfParse = (_pdfParse as any).default || _pdfParse;
+const PDFParse = (_pdfParse as any).default || (_pdfParse as any).PDFParse || _pdfParse;
 import mammoth from 'mammoth';
 
 const KNOWLEDGE_DIR =
@@ -69,8 +69,14 @@ async function extractText(filePath: string, ext: string): Promise<string | null
   if (ext === '.pdf') {
     // Read as binary buffer — do NOT read PDFs as UTF-8 text
     const dataBuffer = fs.readFileSync(filePath);
-    const result = await pdfParse(dataBuffer);
-    return result.text;
+    try {
+      const pdf = new PDFParse(new Uint8Array(dataBuffer));
+      const result = await pdf.getText();
+      return result.text;
+    } catch (err: any) {
+      console.warn(`[KNOWLEDGE] PDF parse failed for ${filePath}: ${err?.message}`);
+      return "";
+    }
   }
 
   if (ext === '.docx') {
@@ -183,8 +189,19 @@ export async function indexKnowledgeBase() {
         .where(eq(sourceMetadata.sourceFile, file));
 
       if (existingMeta.length > 0 && existingMeta[0].sourceHash === fileHash) {
-        filesSkipped++;
-        continue;
+        const chunkCountResult = await db.execute(sql`
+          SELECT COUNT(*)::int AS count
+          FROM knowledge_chunks
+          WHERE source_file = ${file}
+        `);
+        const chunkCount = Number((chunkCountResult as any).rows?.[0]?.count || 0);
+
+        if (chunkCount > 0) {
+          filesSkipped++;
+          continue;
+        }
+
+        console.warn(`[KNOWLEDGE] Metadata exists for "${file}" but no chunks were found. Re-indexing.`);
       }
 
       // Extract text from the file
@@ -251,32 +268,27 @@ export async function indexKnowledgeBase() {
         continue;
       }
 
-      // Delete old chunks for this source file ONLY after embeddings are ready
-      await db
-        .delete(knowledgeChunks)
-        .where(eq(knowledgeChunks.sourceFile, file));
-
-      // Insert the new chunks
-      await db.insert(knowledgeChunks).values(allValues);
-      fileChunksInserted = allValues.length;
-      totalChunksInserted += fileChunksInserted;
-
-      // Update source metadata with the new hash
-      await db
-        .insert(sourceMetadata)
-        .values({
+      // Use transaction to ensure safe replacement
+      await db.transaction(async (tx) => {
+        await tx.delete(knowledgeChunks).where(eq(knowledgeChunks.sourceFile, file));
+        await tx.insert(knowledgeChunks).values(allValues);
+        
+        await tx.insert(sourceMetadata).values({
           sourceFile: file,
           sourceHash: fileHash,
           sourceVersion: '1.0',
           lastIndexed: new Date(),
-        })
-        .onConflictDoUpdate({
+        }).onConflictDoUpdate({
           target: sourceMetadata.sourceFile,
           set: {
             sourceHash: fileHash,
             lastIndexed: new Date(),
           },
         });
+      });
+
+      fileChunksInserted = allValues.length;
+      totalChunksInserted += fileChunksInserted;
 
       filesIndexed++;
       console.log(`[KNOWLEDGE] ✓ Indexed "${file}" — ${fileChunksInserted} chunks`);
